@@ -32,7 +32,7 @@ test:
 	$(MAKE) -C test
 
 doc/git-remote-hg.1: doc/git-remote-hg.txt
-	a2x -d manpage -f manpage $<
+	asciidoctor -d manpage -b manpage $<
 
 clean:
 	$(RM) doc/git-remote-hg.1
