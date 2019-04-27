@@ -5,15 +5,8 @@ import subprocess
 import sys
 import os
 
-# derive version from git repo
-cmd = ["git", "describe", "--tags"]
-commit = os.environ.get('REV', None)
-if commit:
-  cmd.append(commit)
-process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-version = process.communicate()[0].strip()
 # strip leading v
-version = version[1:]
+version = 'v1.0.0'
 
 # check for released version
 assert (len(version) > 0)

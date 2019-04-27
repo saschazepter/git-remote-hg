@@ -27,6 +27,8 @@ install-doc: doc
 	install -m 644 doc/git-remote-hg.1 $(D)$(mandir)/git-remote-hg.1
 
 pypi:
+	version=`git describe --tags ${REV}` && \
+		sed -i "s/version = .*/version = '$$version'/" setup.py
 	-rm -rf dist build
 	python setup.py sdist bdist_wheel
 
