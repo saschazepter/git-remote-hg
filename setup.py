@@ -6,7 +6,7 @@ import sys
 import os
 
 # strip leading v
-version = 'v1.0.0'
+version = 'v1.0.1'
 
 # check for released version
 assert (len(version) > 0)
