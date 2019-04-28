@@ -28,7 +28,7 @@ install-doc: doc
 
 pypi:
 	version=`git describe --tags ${REV}` && \
-		sed -i "s/version = .*/version = '$$version'/" setup.py
+		sed -i "s/version = .*/version = '$$version'[1:]/" setup.py
 	-rm -rf dist build
 	python setup.py sdist bdist_wheel
 
