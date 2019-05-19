@@ -86,10 +86,10 @@ def hgbin(n):
     return node.bin(n)
 
 def hgref(ref):
-    return ref.replace('___', ' ')
+    return ref.replace('___', ' ').replace('%5F%5F%5F', '___')
 
 def gitref(ref):
-    return ref.replace(' ', '___')
+    return ref.replace('___', '%5F%5F%5F').replace(' ', '___')
 
 def check_version(*check):
     if not hg_version:
