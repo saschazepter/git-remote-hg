@@ -778,16 +778,30 @@ test_expect_failure 'remote big push force' '
 	(
 	cd gitrepo &&
 
-	check_push 0 --force --all <<-\EOF
-	master
-	good_bmark
-	branches/good_branch
-	new_bmark:new
-	branches/new_branch:new
-	bad_bmark1:forced-update
-	bad_bmark2:forced-update
-	branches/bad_branch:forced-update
-	EOF
+	if test "$CAPABILITY_PUSH" = "t"
+	then
+		check_push 0 --force --all <<-\EOF
+		master:forced-update
+		good_bmark:forced-update
+		branches/good_branch:forced-update
+		new_bmark:new
+		branches/new_branch:new
+		bad_bmark1:forced-update
+		bad_bmark2:forced-update
+		branches/bad_branch:forced-update
+		EOF
+	else
+		check_push 0 --force --all <<-\EOF
+		master
+		good_bmark
+		branches/good_branch
+		new_bmark:new
+		branches/new_branch:new
+		bad_bmark1:forced-update
+		bad_bmark2:forced-update
+		branches/bad_branch:forced-update
+		EOF
+	fi
 	) &&
 
 	check_branch hgrepo default six &&
