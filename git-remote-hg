@@ -1273,6 +1273,10 @@ def push(repo, remote, p_revs, force):
 
     return ret
 
+def bookmark_is_fake(bmark, real_bmarks):
+    return bmark == fake_bmark or \
+            (bmark == 'master' and bmark not in real_bmarks)
+
 def do_export(parser):
     do_push_hg(parser)
     print
@@ -1338,8 +1342,7 @@ def do_push_hg(parser):
                 continue
 
             print "ok %s" % ref
-            if bmark != fake_bmark and \
-                    not (bmark == 'master' and bmark not in parser.repo._bookmarks):
+            if not bookmark_is_fake(bmark, parser.repo._bookmarks):
                 p_bmarks.append((ref, bmark, old, new))
 
             p_revs[bnode] = ref
@@ -1372,7 +1375,7 @@ def do_push_hg(parser):
             continue
 
     if dry_run:
-        if peer and not force_push:
+        if peer:
             checkheads(parser.repo, peer, p_revs, force_push)
         return
 

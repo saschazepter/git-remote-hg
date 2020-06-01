@@ -96,14 +96,14 @@ check_push () {
 		'')
 			grep "^   [a-f0-9]*\.\.[a-f0-9]* *${branch} -> ${branch}$" error || ref_ret=1
 			;;
+		*)
+			echo "BUG: wrong kind '$kind'" && return 3
+			;;
 		esac
-		test $ref_ret -ne 0 && echo "match for '$branch' failed" && break
+		test $ref_ret -ne 0 && echo "match for '$branch' failed" && return 2
 	done
 
-	if test $expected_ret -ne $ret || test $ref_ret -ne 0
-	then
-		return 1
-	fi
+	test $expected_ret -ne $ret && return 1
 
 	return 0
 }
@@ -686,11 +686,11 @@ test_expect_success 'remote big push' '
 		check_branch hgrepo default one &&
 		check_branch hgrepo good_branch "good branch" &&
 		check_branch hgrepo bad_branch "bad branch" &&
-		check_branch hgrepo new_branch '' &&
+		check_branch hgrepo new_branch &&
 		check_bookmark hgrepo good_bmark one &&
 		check_bookmark hgrepo bad_bmark1 one &&
 		check_bookmark hgrepo bad_bmark2 one &&
-		check_bookmark hgrepo new_bmark ''
+		check_bookmark hgrepo new_bmark
 	fi
 '
 
@@ -845,11 +845,55 @@ test_expect_success 'remote big push dry-run' '
 	check_branch hgrepo default one &&
 	check_branch hgrepo good_branch "good branch" &&
 	check_branch hgrepo bad_branch "bad branch" &&
-	check_branch hgrepo new_branch '' &&
+	check_branch hgrepo new_branch &&
 	check_bookmark hgrepo good_bmark one &&
 	check_bookmark hgrepo bad_bmark1 one &&
 	check_bookmark hgrepo bad_bmark2 one &&
-	check_bookmark hgrepo new_bmark ''
+	check_bookmark hgrepo new_bmark
+'
+
+test_expect_success 'remote big push force dry-run' '
+	test_when_finished "rm -rf hgrepo gitrepo*" &&
+
+	setup_big_push
+
+	(
+	cd gitrepo &&
+
+	if test "$CAPABILITY_PUSH" = "t"
+	then
+		check_push 0 --force --dry-run --all <<-\EOF
+		master:forced-update
+		good_bmark:forced-update
+		branches/good_branch:forced-update
+		new_bmark:new
+		branches/new_branch:new
+		bad_bmark1:forced-update
+		bad_bmark2:forced-update
+		branches/bad_branch:forced-update
+		EOF
+	else
+		check_push 0 --force --dry-run --all <<-\EOF
+		master
+		good_bmark
+		branches/good_branch
+		new_bmark:new
+		branches/new_branch:new
+		bad_bmark1:forced-update
+		bad_bmark2:forced-update
+		branches/bad_branch:forced-update
+		EOF
+	fi
+	) &&
+
+	check_branch hgrepo default one &&
+	check_branch hgrepo good_branch "good branch" &&
+	check_branch hgrepo bad_branch "bad branch" &&
+	check_branch hgrepo new_branch &&
+	check_bookmark hgrepo good_bmark one &&
+	check_bookmark hgrepo bad_bmark1 one &&
+	check_bookmark hgrepo bad_bmark2 one &&
+	check_bookmark hgrepo new_bmark
 '
 
 test_expect_success 'remote double failed push' '
