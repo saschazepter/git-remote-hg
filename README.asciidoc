@@ -252,9 +252,11 @@ to fully complete the conversion (prior to subsequent pushing).
 Some Mercurial names (of branches, bookmarks, tags) may not be a valid git
 refname. See e.g. `man git-check-ref-format` for a rather involved set of rules.
 Moreover, while a slash `/` is allowed, it is not supported to have both a `parent`
-and `parent/child` branch (though only the latter is allowed). So, pending some
-"nice" bidirectional encoding (not even e.g. URL encoding is safe actually), it is more
-likely that only a few instances (out of a whole Mercurial repo) are
+and `parent/child` branch (though only the latter is allowed). Even though
+it is not quite (bidirectionally) safe, a (percentage) URL encoding
+(with some additional twist) is performed to obtain sane git refnames, at least
+so for most cases.  If some nasty cases still slip through, then likely only
+a few instances (out of a whole Mercurial repo) are
 problematic.  This could be handled by a single-branch clone and/or configuring
 a suitable refspec.  However, it might be more convenient to simply filter out a
 few unimportant pesky cases, which can be done by configuring a regural

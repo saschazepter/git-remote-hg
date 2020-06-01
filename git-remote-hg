@@ -29,6 +29,9 @@ import urlparse
 import hashlib
 import time as ptime
 
+urlquote = urllib.quote
+urlunquote = urllib.unquote
+
 #
 # If you want to see Mercurial revisions as Git commit notes:
 # git config core.notesRef refs/notes/hg
@@ -95,10 +98,13 @@ def hgbin(n):
     return node.bin(n)
 
 def hgref(ref):
-    return ref.replace('___', ' ').replace('%5F%5F%5F', '___')
+    return urlunquote(ref.replace('___', '%20').replace('%5F%5F%5F', '___'))
 
 def gitref(ref):
-    return ref.replace('___', '%5F%5F%5F').replace(' ', '___')
+    # standard url percentage encoding with a (legacy) twist:
+    # ' ' -> '___'
+    # '___' also percentage encoded
+    return urlquote(ref).replace('___', '%5F%5F%5F').replace('%20', '___')
 
 def check_version(*check):
     if not hg_version:
