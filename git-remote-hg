@@ -1144,7 +1144,7 @@ def checkheads_bmark(repo, ref, ctx, force):
     ctx_old = bmarks[bmark]
     ctx_new = ctx
 
-    if not ctx.rev():
+    if ctx.rev() is None:
         print "error %s unknown" % ref
         return False
 
