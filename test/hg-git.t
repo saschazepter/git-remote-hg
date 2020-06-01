@@ -34,15 +34,6 @@ else
 	test_done
 fi
 
-hg_version=$(python2 -c 'from mercurial import util; print util.version()')
-
-case $hg_version in
-3.0*+*)
-	skip_all='skipping remote-hg tests; unsuported version of hg by hg-git'
-	test_done
-	;;
-esac
-
 # clone to a git repo with git
 git_clone_git () {
 	git clone -q "hg::$1" $2 &&
@@ -117,6 +108,8 @@ setup () {
 	[extensions]
 	$hggit =
 	graphlog =
+	[git]
+	debugextrainmessage = 1
 	EOF
 	git config --global receive.denycurrentbranch warn
 	git config --global remote-hg.hg-git-compat true
@@ -131,6 +124,31 @@ setup () {
 }
 
 setup
+
+test_expect_success 'rename' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	(
+	hg init hgrepo1 &&
+	cd hgrepo1 &&
+	echo alpha > alpha &&
+	hg add alpha &&
+	hg commit -m "add alpha" &&
+	hg mv alpha beta &&
+	hg commit -m "rename alpha to beta"
+	) &&
+
+	for x in hg git
+	do
+		git_clone_$x hgrepo1 gitrepo-$x &&
+		hg_clone_$x gitrepo-$x hgrepo2-$x &&
+		hg_log hgrepo2-$x > "hg-log-$x" &&
+		git_log gitrepo-$x > "git-log-$x"
+	done &&
+
+	test_cmp hg-log-hg hg-log-git &&
+	test_cmp git-log-hg git-log-git
+'
 
 test_expect_success 'executable bit' '
 	test_when_finished "rm -rf gitrepo* hgrepo*" &&

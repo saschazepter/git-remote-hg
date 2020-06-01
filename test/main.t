@@ -770,7 +770,7 @@ test_expect_success 'remote big push non fast forward' '
 	)
 '
 
-test_expect_failure 'remote big push force' '
+test_expect_success 'remote big push force' '
 	test_when_finished "rm -rf hgrepo gitrepo*" &&
 
 	setup_big_push
@@ -1009,7 +1009,7 @@ testpushupdatesnotes='
 	(
 	cd gitrepo &&
 	echo two > content &&
-	git commit -a -m two
+	git commit -a -m two &&
 	git push
 	) &&
 
@@ -1095,7 +1095,7 @@ test_expect_success 'push merged named branch' '
 	git push
 	) &&
 
-	cat > expected <<-EOF
+	cat > expected <<-EOF &&
 	Merge
 	three
 	two
@@ -1136,7 +1136,7 @@ test_expect_success 'push tag different branch' '
 	cd hgrepo &&
 	echo one > content &&
 	hg add content &&
-	hg commit -m one
+	hg commit -m one &&
 	hg branch feature &&
 	echo two > content &&
 	hg commit -m two
@@ -1241,6 +1241,34 @@ test_expect_success 'clone can ignore invalid refnames' '
 
 	git clone -c remote-hg.ignore-name=child "hg::hgrepo" gitrepo &&
 	check_files gitrepo "test.txt"
+'
+
+test_expect_success 'push annotated tag' '
+	test_when_finished "rm -rf hgrepo gitrepo" &&
+
+	(
+	hg init hgrepo &&
+	cd hgrepo &&
+	echo one > content &&
+	hg add content &&
+	hg commit -m one
+	) &&
+
+	(
+	git clone "hg::hgrepo" gitrepo &&
+	cd gitrepo &&
+	git tag -m "Version 1.0" v1.0 &&
+	git push --tags
+	) &&
+
+	cat > expected <<-\EOF &&
+	tip:Version 1.0:C O Mitter <committer@example.com>
+	v1.0:one:H G Wells <wells@example.com>
+	EOF
+
+	hg -R hgrepo log --template "{tags}:{desc}:{author}\n" > actual &&
+
+	test_cmp expected actual
 '
 
 if test "$CAPABILITY_PUSH" != "t"
