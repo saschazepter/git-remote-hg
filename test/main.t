@@ -96,14 +96,14 @@ check_push () {
 		'')
 			grep "^   [a-f0-9]*\.\.[a-f0-9]* *${branch} -> ${branch}$" error || ref_ret=1
 			;;
+		*)
+			echo "BUG: wrong kind '$kind'" && return 3
+			;;
 		esac
-		test $ref_ret -ne 0 && echo "match for '$branch' failed" && break
+		test $ref_ret -ne 0 && echo "match for '$branch' failed" && return 2
 	done
 
-	if test $expected_ret -ne $ret || test $ref_ret -ne 0
-	then
-		return 1
-	fi
+	test $expected_ret -ne $ret && return 1
 
 	return 0
 }
@@ -686,11 +686,11 @@ test_expect_success 'remote big push' '
 		check_branch hgrepo default one &&
 		check_branch hgrepo good_branch "good branch" &&
 		check_branch hgrepo bad_branch "bad branch" &&
-		check_branch hgrepo new_branch '' &&
+		check_branch hgrepo new_branch &&
 		check_bookmark hgrepo good_bmark one &&
 		check_bookmark hgrepo bad_bmark1 one &&
 		check_bookmark hgrepo bad_bmark2 one &&
-		check_bookmark hgrepo new_bmark ''
+		check_bookmark hgrepo new_bmark
 	fi
 '
 
@@ -770,7 +770,7 @@ test_expect_success 'remote big push non fast forward' '
 	)
 '
 
-test_expect_failure 'remote big push force' '
+test_expect_success 'remote big push force' '
 	test_when_finished "rm -rf hgrepo gitrepo*" &&
 
 	setup_big_push
@@ -845,11 +845,55 @@ test_expect_success 'remote big push dry-run' '
 	check_branch hgrepo default one &&
 	check_branch hgrepo good_branch "good branch" &&
 	check_branch hgrepo bad_branch "bad branch" &&
-	check_branch hgrepo new_branch '' &&
+	check_branch hgrepo new_branch &&
 	check_bookmark hgrepo good_bmark one &&
 	check_bookmark hgrepo bad_bmark1 one &&
 	check_bookmark hgrepo bad_bmark2 one &&
-	check_bookmark hgrepo new_bmark ''
+	check_bookmark hgrepo new_bmark
+'
+
+test_expect_success 'remote big push force dry-run' '
+	test_when_finished "rm -rf hgrepo gitrepo*" &&
+
+	setup_big_push
+
+	(
+	cd gitrepo &&
+
+	if test "$CAPABILITY_PUSH" = "t"
+	then
+		check_push 0 --force --dry-run --all <<-\EOF
+		master:forced-update
+		good_bmark:forced-update
+		branches/good_branch:forced-update
+		new_bmark:new
+		branches/new_branch:new
+		bad_bmark1:forced-update
+		bad_bmark2:forced-update
+		branches/bad_branch:forced-update
+		EOF
+	else
+		check_push 0 --force --dry-run --all <<-\EOF
+		master
+		good_bmark
+		branches/good_branch
+		new_bmark:new
+		branches/new_branch:new
+		bad_bmark1:forced-update
+		bad_bmark2:forced-update
+		branches/bad_branch:forced-update
+		EOF
+	fi
+	) &&
+
+	check_branch hgrepo default one &&
+	check_branch hgrepo good_branch "good branch" &&
+	check_branch hgrepo bad_branch "bad branch" &&
+	check_branch hgrepo new_branch &&
+	check_bookmark hgrepo good_bmark one &&
+	check_bookmark hgrepo bad_bmark1 one &&
+	check_bookmark hgrepo bad_bmark2 one &&
+	check_bookmark hgrepo new_bmark
 '
 
 test_expect_success 'remote double failed push' '
@@ -1009,7 +1053,7 @@ testpushupdatesnotes='
 	(
 	cd gitrepo &&
 	echo two > content &&
-	git commit -a -m two
+	git commit -a -m two &&
 	git push
 	) &&
 
@@ -1050,7 +1094,7 @@ test_expect_success 'push bookmark without changesets' '
 	check_bookmark hgrepo feature-a two
 '
 
-test_expect_success 'pull tags' '
+test_expect_unstable 'pull tags' '
 	test_when_finished "rm -rf hgrepo gitrepo" &&
 
 	(
@@ -1095,7 +1139,7 @@ test_expect_success 'push merged named branch' '
 	git push
 	) &&
 
-	cat > expected <<-EOF
+	cat > expected <<-EOF &&
 	Merge
 	three
 	two
@@ -1136,7 +1180,7 @@ test_expect_success 'push tag different branch' '
 	cd hgrepo &&
 	echo one > content &&
 	hg add content &&
-	hg commit -m one
+	hg commit -m one &&
 	hg branch feature &&
 	echo two > content &&
 	hg commit -m two
@@ -1241,6 +1285,55 @@ test_expect_success 'clone can ignore invalid refnames' '
 
 	git clone -c remote-hg.ignore-name=child "hg::hgrepo" gitrepo &&
 	check_files gitrepo "test.txt"
+'
+
+test_expect_success 'push annotated tag' '
+	test_when_finished "rm -rf hgrepo gitrepo" &&
+
+	(
+	hg init hgrepo &&
+	cd hgrepo &&
+	echo one > content &&
+	hg add content &&
+	hg commit -m one
+	) &&
+
+	(
+	git clone "hg::hgrepo" gitrepo &&
+	cd gitrepo &&
+	git tag -m "Version 1.0" v1.0 &&
+	git push --tags
+	) &&
+
+	cat > expected <<-\EOF &&
+	tip:Version 1.0:C O Mitter <committer@example.com>
+	v1.0:one:H G Wells <wells@example.com>
+	EOF
+
+	hg -R hgrepo log --template "{tags}:{desc}:{author}\n" > actual &&
+
+	test_cmp expected actual
+'
+
+test_expect_success 'timezone issues with negative offsets' '
+	test_when_finished "rm -rf hgrepo gitrepo1 gitrepo2" &&
+
+	hg init hgrepo &&
+
+	(
+	git clone "hg::hgrepo" gitrepo1 &&
+	cd gitrepo1 &&
+	echo two >> content &&
+	git add content &&
+	git commit -m two --date="2016-09-26 00:00:00 -0230" &&
+	git push
+	) &&
+
+	git clone "hg::hgrepo" gitrepo2 &&
+
+	git --git-dir=gitrepo1/.git log -1 --format="%ai" > expected &&
+	git --git-dir=gitrepo2/.git log -1 --format="%ai" > actual &&
+	test_cmp expected actual
 '
 
 if test "$CAPABILITY_PUSH" != "t"

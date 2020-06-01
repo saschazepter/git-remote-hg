@@ -153,8 +153,6 @@ Limitations of the remote-helpers' framework apply. In particular, these
 commands don't work:
 
 * `git push origin :branch-to-delete`
-* `git push origin old:new` (it will push 'old') (patches available)
-* `git push --dry-run origin branch` (it will push) (patches available)
 
 ****
 Another limitation is that if `git log` reports a rename, this will not survive
