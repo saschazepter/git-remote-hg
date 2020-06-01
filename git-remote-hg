@@ -23,14 +23,97 @@ import os
 import json
 import shutil
 import subprocess
-import urllib
 import atexit
-import urlparse
 import hashlib
 import time as ptime
 
-urlquote = urllib.quote
-urlunquote = urllib.unquote
+# python 2/3 compatibility approach:
+# * all data exchanged with git or Mercurial is bytes (as was in python2)
+#   (and is also how Mercurial has internally migrated)
+# * since such data typically includes paths, all paths are also always bytes
+# * where it does no harm and/or involves plain ASCII anyway,
+#   either bytes or str is used as convenient (e.g. internal enum-like use, etc)
+
+# generic
+class basecompat:
+    @staticmethod
+    def char(c):
+      assert len(c) == 1
+      return c[0]
+
+if sys.version_info[0] == 3:
+    import locale
+    import urllib.parse
+    class compat(basecompat):
+        # sigh ... wonderful python3 ... as taken from Mercurial's pycompat
+        @staticmethod
+        def decode_sysarg(arg):
+            if os.name == r'nt':
+                return arg.encode("mbcs", "ignore")
+            else:
+                enc = (
+                    locale.getlocale()[1]
+                    or locale.getdefaultlocale()[1]
+                    or sys.getfilesystemencoding()
+                )
+                return arg.encode(enc, "surrogateescape")
+        @staticmethod
+        def iteritems(d):
+            return d.items()
+        # mostly used for straight 'cast' (not real unicode content)
+        @staticmethod
+        def to_b(s, *args):
+            if isinstance(s, str):
+                args = args or ['latin-1']
+                return s.encode(*args)
+            return s
+        @staticmethod
+        def to_str(s):
+            if isinstance(s, bytes):
+                return s.decode('latin-1')
+            return s
+        @staticmethod
+        def urlquote(*args, **kwargs):
+            return compat.to_b(urllib.parse.quote_from_bytes(*args, **kwargs))
+        @staticmethod
+        def urlunquote(*args, **kwargs):
+            return urllib.parse.unquote_to_bytes(*args, **kwargs)
+        @staticmethod
+        def unescape(s):
+            return bytes(s.decode('unicode-escape'), 'latin-1')
+        stdin = sys.stdin.buffer
+        stdout = sys.stdout.buffer
+        stderr = sys.stderr.buffer
+        getcwd = os.getcwdb
+        getenv = os.getenvb if os.supports_bytes_environ else os.getenv
+        urlparse = urllib.parse.urlparse
+        urljoin = urllib.parse.urljoin
+else:
+    import urllib
+    from urlparse import urlparse as _urlparse
+    from urlparse import urljoin as _urljoin
+    class compat(basecompat):
+        # life was simple in those days ...
+        @staticmethod
+        def iteritems(d):
+            return d.iteritems()
+        @staticmethod
+        def unescape(s):
+            return s.decode('string-escape')
+        @staticmethod
+        def to_b(s, *args):
+            return s
+        to_str = to_b
+        decode_sysarg = to_b
+        stdin = sys.stdin
+        stdout = sys.stdout
+        stderr = sys.stderr
+        getcwd = staticmethod(os.getcwd)
+        getenv = staticmethod(os.getenv)
+        urlquote = staticmethod(urllib.quote)
+        urlunquote = staticmethod(urllib.unquote)
+        urlparse = staticmethod(_urlparse)
+        urljoin = staticmethod(_urljoin)
 
 #
 # If you want to see Mercurial revisions as Git commit notes:
@@ -57,28 +140,33 @@ urlunquote = urllib.unquote
 # Commits are modified to preserve hg information and allow bidirectionality.
 #
 
-NAME_RE = re.compile('^([^<>]+)')
-AUTHOR_RE = re.compile('^([^<>]+?)? ?[<>]([^<>]*)(?:$|>)')
-EMAIL_RE = re.compile(r'([^ \t<>]+@[^ \t<>]+)')
-AUTHOR_HG_RE = re.compile('^(.*?) ?<(.*?)(?:>(.*))?$')
-RAW_AUTHOR_RE = re.compile('^(\w+) (?:(.+)? )?<(.*)> (\d+) ([+-]\d+)')
+NAME_RE = re.compile(b'^([^<>]+)')
+AUTHOR_RE = re.compile(b'^([^<>]+?)? ?[<>]([^<>]*)(?:$|>)')
+EMAIL_RE = re.compile(br'([^ \t<>]+@[^ \t<>]+)')
+AUTHOR_HG_RE = re.compile(b'^(.*?) ?<(.*?)(?:>(.*))?$')
+RAW_AUTHOR_RE = re.compile(b'^(\w+) (?:(.+)? )?<(.*)> (\d+) ([+-]\d+)')
 
 VERSION = 2
 
-def die(msg, *args):
-    sys.stderr.write('ERROR: %s\n' % (msg % args))
+def die(msg):
+    compat.stderr.write(b'ERROR: %s\n' % compat.to_b(msg, 'utf-8'))
     sys.exit(1)
 
-def warn(msg, *args):
-    sys.stderr.write('WARNING: %s\n' % (msg % args))
+def warn(msg):
+    compat.stderr.write(b'WARNING: %s\n' % compat.to_b(msg, 'utf-8'))
+    compat.stderr.flush()
+
+def puts(msg = b''):
+    compat.stdout.write(msg)
+    compat.stdout.write(b'\n')
 
 def gitmode(flags):
-    return 'l' in flags and '120000' or 'x' in flags and '100755' or '100644'
+    return b'l' in flags and b'120000' or b'x' in flags and b'100755' or b'100644'
 
 def gittz(tz):
     sign = 1 if tz >= 0 else -1
     hours, minutes = divmod(abs(tz), 60 * 60)
-    return '%+03d%02d' % (-sign * hours, minutes / 60)
+    return b'%+03d%02d' % (-sign * hours, minutes / 60)
 
 def hgtz(tz):
     tz = int(tz)
@@ -88,8 +176,8 @@ def hgtz(tz):
     return -sign * tz
 
 def hgmode(mode):
-    m = { '100755': 'x', '120000': 'l' }
-    return m.get(mode, '')
+    m = { b'100755': b'x', b'120000': b'l' }
+    return m.get(mode, b'')
 
 def hghex(n):
     return node.hex(n)
@@ -98,13 +186,13 @@ def hgbin(n):
     return node.bin(n)
 
 def hgref(ref):
-    return urlunquote(ref.replace('___', '%20').replace('%5F%5F%5F', '___'))
+    return compat.urlunquote(ref.replace(b'___', b'%20').replace(b'%5F%5F%5F', b'___'))
 
 def gitref(ref):
     # standard url percentage encoding with a (legacy) twist:
     # ' ' -> '___'
     # '___' also percentage encoded
-    return urlquote(ref).replace('___', '%5F%5F%5F').replace('%20', '___')
+    return compat.urlquote(ref).replace(b'___', b'%5F%5F%5F').replace(b'%20', b'___')
 
 def check_version(*check):
     if not hg_version:
@@ -118,10 +206,10 @@ def get_config(config, getall=False):
     return output
 
 def get_config_bool(config, default=False):
-    value = get_config(config).rstrip('\n')
-    if value == "true":
+    value = get_config(config).rstrip()
+    if value == b"true":
         return True
-    elif value == "false":
+    elif value == b"false":
         return False
     else:
         return default
@@ -168,22 +256,26 @@ class Marks:
             return
 
         tmp = json.load(open(self.path))
+        # convert to binary entries
+        marks = {}
+        for r, m in compat.iteritems(tmp['marks']):
+            marks[compat.to_b(r)] = m
 
         self.tips = []
-        self.marks = tmp['marks']
+        self.marks = marks
         self.last_mark = tmp['last-mark']
         self.version = tmp.get('version', 1)
         self.last_note = 0
 
-        for rev, mark in self.marks.iteritems():
+        for rev, mark in compat.iteritems(self.marks):
             self.rev_marks[mark] = rev
 
     def upgrade_one(self):
         def get_id(rev):
             return hghex(self.repo.changelog.node(int(rev)))
-        self.tips = dict((name, get_id(rev)) for name, rev in self.tips.iteritems())
-        self.marks = dict((get_id(rev), mark) for rev, mark in self.marks.iteritems())
-        self.rev_marks = dict((mark, get_id(rev)) for mark, rev in self.rev_marks.iteritems())
+        self.tips = dict((name, get_id(rev)) for name, rev in compat.iteritems(self.tips))
+        self.marks = dict((get_id(rev), mark) for rev, mark in compat.iteritems(self.marks))
+        self.rev_marks = dict((mark, get_id(rev)) for mark, rev in compat.iteritems(self.rev_marks))
         self.version = 2
 
     def dict(self):
@@ -192,7 +284,13 @@ class Marks:
                 'last-note': self.last_note }
 
     def store(self):
-        json.dump(self.dict(), open(self.path, 'w'))
+        # convert to str prior to dump
+        d = self.dict()
+        marks = {}
+        for r, m in compat.iteritems(d['marks']):
+            marks[compat.to_str(r)] = m
+        d['marks'] = marks
+        json.dump(d, open(self.path, 'w'))
 
     def __str__(self):
         return str(self.dict())
@@ -201,7 +299,7 @@ class Marks:
         return self.marks[rev]
 
     def to_rev(self, mark):
-        return str(self.rev_marks[mark])
+        return self.rev_marks[mark]
 
     def next_mark(self):
         self.last_mark += 1
@@ -233,7 +331,7 @@ class ParserContext:
 
 class Parser:
 
-    def __init__(self, repo, cmdstream=sys.stdin, ctx=ParserContext()):
+    def __init__(self, repo, cmdstream=compat.stdin, ctx=ParserContext()):
         self.repo = repo
         self.cmdstream = cmdstream
         self.line = self.get_line()
@@ -254,21 +352,24 @@ class Parser:
             self.line = self.get_line()
 
     def __iter__(self):
-        return self.each_block('')
+        return self.each_block(b'')
+
+    def __next__(self):
+        return self.next()
 
     def next(self):
         self.line = self.get_line()
-        if self.line == 'done':
+        if self.line == b'done':
             self.line = None
 
     def get_mark(self):
-        i = self.line.index(':') + 1
+        i = self.line.index(b':') + 1
         return int(self.line[i:])
 
     def get_data(self):
-        if not self.check('data'):
+        if not self.check(b'data'):
             return None
-        i = self.line.index(' ') + 1
+        i = self.line.index(b' ') + 1
         size = int(self.line[i:])
         return self.cmdstream.read(size)
 
@@ -278,17 +379,17 @@ class Parser:
         if not m:
             return None
         _, name, email, date, tz = m.groups()
-        if name and 'ext:' in name:
-            m = re.match('^(.+?) ext:\((.+)\)$', name)
+        if name and b'ext:' in name:
+            m = re.match(b'^(.+?) ext:\((.+)\)$', name)
             if m:
                 name = m.group(1)
-                ex = urllib.unquote(m.group(2))
+                ex = compat.urlunquote(m.group(2))
 
         if email != bad_mail:
             if name:
-                user = '%s <%s>' % (name, email)
+                user = b'%s <%s>' % (name, email)
             else:
-                user = '<%s>' % (email)
+                user = b'<%s>' % (email)
         else:
             user = name
 
@@ -302,12 +403,12 @@ def fix_file_path(path):
         if os.sep == '/':
             return path
         # even Git for Windows expects forward
-        return path.replace(os.sep, '/')
+        return path.replace(compat.to_b(os.sep), b'/')
     # also converts forward slash to backwards slash on Win
     path = os.path.normpath(path)
     if not os.path.isabs(path):
         return posix_path(path)
-    return posix_path(os.path.relpath(path, '/'))
+    return posix_path(os.path.relpath(path, b'/'))
 
 def export_files(files):
     final = []
@@ -321,10 +422,10 @@ def export_files(files):
             filenodes[fid] = mark
             d = f.data()
 
-            print "blob"
-            print "mark :%u" % mark
-            print "data %d" % len(d)
-            print d
+            puts(b"blob")
+            puts(b"mark :%u" % mark)
+            puts(b"data %d" % len(d))
+            puts(d)
 
         path = fix_file_path(f.path())
         final.append((gitmode(f.flags()), mark, path))
@@ -355,7 +456,7 @@ def fixup_user_git(user):
     name = mail = None
     global remove_username_quotes
     if remove_username_quotes:
-        user = user.replace('"', '')
+        user = user.replace(b'"', b'')
     m = AUTHOR_RE.match(user)
     if m:
         name = m.group(1)
@@ -373,7 +474,7 @@ def fixup_user_git(user):
 def fixup_user_hg(user):
     def sanitize(name):
         # stole this from hg-git
-        return re.sub('[<>\n]', '?', name.lstrip('< ').rstrip('> '))
+        return re.sub(b'[<>\n]', b'?', name.lstrip(b'< ').rstrip(b'> '))
 
     m = AUTHOR_HG_RE.match(user)
     if m:
@@ -381,10 +482,10 @@ def fixup_user_hg(user):
         mail = sanitize(m.group(2))
         ex = m.group(3)
         if ex:
-            name += ' ext:(' + urllib.quote(ex) + ')'
+            name += b' ext:(' + compat.urlquote(ex) + b')'
     else:
         name = sanitize(user)
-        if '@' in user:
+        if b'@' in user:
             mail = name
         else:
             mail = None
@@ -402,19 +503,19 @@ def fixup_user(user):
     if not mail:
         mail = bad_mail
 
-    return '%s <%s>' % (name, mail)
+    return b'%s <%s>' % (name, mail)
 
 def updatebookmarks(repo, peer):
-    remotemarks = peer.listkeys('bookmarks')
+    remotemarks = peer.listkeys(b'bookmarks')
 
     # delete bookmarks locally that disappeared on remote
     localmarks = bookmarks.listbookmarks(repo)
     remote = set(remotemarks.keys())
     local = set(localmarks.keys())
     for bmark in local - remote:
-        bookmarks.pushbookmark(repo, bmark, localmarks[bmark], '')
+        bookmarks.pushbookmark(repo, bmark, localmarks[bmark], b'')
         # also delete private ref
-        pbookmark = '%s/bookmarks/%s' % (prefix, bmark)
+        pbookmark = b'%s/bookmarks/%s' % (prefix, bmark)
         subprocess.call(['git', 'update-ref', '-d', pbookmark])
 
     # now add or update remote bookmarks to local, if any
@@ -424,19 +525,19 @@ def updatebookmarks(repo, peer):
 
     # use a higher level API from now on than the lower one below
     if check_version(4,6):
-        for k, v in remotemarks.iteritems():
-            old = hghex(localmarks.get(k, ''))
+        for k, v in compat.iteritems(remotemarks):
+            old = hghex(localmarks.get(k, b''))
             bookmarks.pushbookmark(repo, k, old, v)
         return
 
-    changes = { k: hgbin(v) for k, v in remotemarks.iteritems() }
+    changes = { k: hgbin(v) for k, v in compat.iteritems(remotemarks) }
 
     wlock = tr = None
     try:
         wlock = repo.wlock()
-        tr = repo.transaction('bookmark')
+        tr = repo.transaction(b'bookmark')
         if check_version(4, 3):
-            localmarks.applychanges(repo, tr, changes.items())
+            localmarks.applychanges(repo, tr, list(changes.items()))
         else:
             localmarks.update(changes)
             if check_version(3, 2):
@@ -459,11 +560,11 @@ def get_repo(url, alias):
         myui = ui.ui.load()
     else:
         myui = ui.ui()
-    myui.setconfig('ui', 'interactive', 'off')
-    myui.fout = sys.stderr
+    myui.setconfig(b'ui', b'interactive', b'off')
+    myui.fout = compat.stderr
 
     if get_config_bool('remote-hg.insecure'):
-        myui.setconfig('web', 'cacerts', '')
+        myui.setconfig(b'web', b'cacerts', b'')
 
     extensions.loadall(myui)
 
@@ -473,19 +574,19 @@ def get_repo(url, alias):
             os.makedirs(dirname)
         branchmap = repo.branchmap()
     else:
-        shared_path = os.path.join(gitdir, 'hg')
+        shared_path = os.path.join(gitdir, b'hg')
 
         # check and upgrade old organization
-        hg_path = os.path.join(shared_path, '.hg')
+        hg_path = os.path.join(shared_path, b'.hg')
         if os.path.exists(shared_path) and not os.path.exists(hg_path):
             repos = os.listdir(shared_path)
             for x in repos:
-                local_hg = os.path.join(shared_path, x, 'clone', '.hg')
+                local_hg = os.path.join(shared_path, x, b'clone', b'.hg')
                 if not os.path.exists(local_hg):
                     continue
                 if not os.path.exists(hg_path):
                     shutil.move(local_hg, hg_path)
-                shutil.rmtree(os.path.join(shared_path, x, 'clone'))
+                shutil.rmtree(os.path.join(shared_path, x, b'clone'))
 
         # setup shared repo (if not there)
         try:
@@ -496,12 +597,12 @@ def get_repo(url, alias):
         if not os.path.exists(dirname):
             os.makedirs(dirname)
 
-        local_path = os.path.join(dirname, 'clone')
+        local_path = os.path.join(dirname, b'clone')
         if not os.path.exists(local_path):
             hg.share(myui, shared_path, local_path, update=False)
         else:
             # make sure the shared path is always up-to-date
-            util.writefile(os.path.join(local_path, '.hg', 'sharedpath'), hg_path)
+            util.writefile(os.path.join(local_path, b'.hg', b'sharedpath'), hg_path)
 
         repo = hg.repository(myui, local_path)
         try:
@@ -511,7 +612,7 @@ def get_repo(url, alias):
 
         branchmap = peer.branchmap()
         heads = []
-        for branch, branch_heads in branchmap.iteritems():
+        for branch, branch_heads in compat.iteritems(branchmap):
             heads.extend(branch_heads)
 
         if check_version(3, 0):
@@ -541,7 +642,7 @@ def revwalk(repo, name, b):
     interval = b.rev() / 10
     interval = interval if interval > 1000 else 1000
     pfunc = repo.changelog.parentrevs
-    for cur in xrange(b.rev(), -1, -1):
+    for cur in range(b.rev(), -1, -1):
         if not pending:
             break
 
@@ -554,13 +655,13 @@ def revwalk(repo, name, b):
                     pending.add(p)
 
         if cur % interval == 0:
-            print "progress revision walk '%s' (%d/%d)" % (name, (b.rev() - cur), b.rev())
+            puts(b"progress revision walk '%s' (%d/%d)" % (name, (b.rev() - cur), b.rev()))
 
     positive.reverse()
     return positive
 
 def export_ref(repo, name, kind, head):
-    ename = '%s/%s' % (kind, name)
+    ename = b'%s/%s' % (kind, name)
     revs = revwalk(repo, ename, head)
     total = len(revs)
 
@@ -570,34 +671,34 @@ def export_ref(repo, name, kind, head):
         node = c.node()
 
         (manifest, user, (time, tz), files, desc, extra) = repo.changelog.read(node)
-        rev_branch = extra['branch']
+        rev_branch = extra[b'branch']
 
-        author = "%s %d %s" % (fixup_user(user), time, gittz(tz))
-        if 'committer' in extra:
+        author = b"%s %d %s" % (fixup_user(user), time, gittz(tz))
+        if b'committer' in extra:
             try:
-                cuser, ctime, ctz = extra['committer'].rsplit(' ', 2)
-                committer = "%s %s %s" % (fixup_user(cuser), ctime, gittz(int(ctz)))
+                cuser, ctime, ctz = extra[b'committer'].rsplit(b' ', 2)
+                committer = b"%s %s %s" % (fixup_user(cuser), ctime, gittz(int(ctz)))
             except ValueError:
-                cuser = extra['committer']
-                committer = "%s %d %s" % (fixup_user(cuser), time, gittz(tz))
+                cuser = extra[b'committer']
+                committer = b"%s %d %s" % (fixup_user(cuser), time, gittz(tz))
         else:
             committer = author
 
         parents = [repo[p] for p in repo.changelog.parentrevs(rev) if p >= 0]
 
         if len(parents) == 0:
-            modified = c.manifest().keys()
+            modified = list(c.manifest().keys())
             removed = []
         else:
             modified, removed = get_filechanges(repo, c, parents[0])
 
-        desc += '\n'
+        desc += b'\n'
 
         if mode == 'hg':
-            extra_msg = ''
+            extra_msg = b''
 
-            if rev_branch != 'default':
-                extra_msg += 'branch : %s\n' % rev_branch
+            if rev_branch != b'default':
+                extra_msg += b'branch : %s\n' % rev_branch
 
             renames = []
             for f in c.files():
@@ -608,92 +709,92 @@ def export_ref(repo, name, kind, head):
                     renames.append((rename[0], f))
 
             for e in renames:
-                extra_msg += "rename : %s => %s\n" % e
+                extra_msg += b"rename : %s => %s\n" % e
 
-            for key, value in extra.iteritems():
-                if key in ('author', 'committer', 'encoding', 'message', 'branch', 'hg-git'):
+            for key, value in compat.iteritems(extra):
+                if key in (b'author', b'committer', b'encoding', b'message', b'branch', b'hg-git'):
                     continue
                 else:
-                    extra_msg += "extra : %s : %s\n" % (key, urllib.quote(value))
+                    extra_msg += b"extra : %s : %s\n" % (key, compat.urlquote(value))
 
             if extra_msg:
-                desc += '\n--HG--\n' + extra_msg
+                desc += b'\n--HG--\n' + extra_msg
 
         if len(parents) == 0:
-            print 'reset %s/%s' % (prefix, ename)
+            puts(b'reset %s/%s' % (prefix, ename))
 
         modified_final = export_files(c.filectx(f) for f in modified)
 
-        print "commit %s/%s" % (prefix, ename)
-        print "mark :%d" % (marks.get_mark(c.hex()))
-        print "author %s" % (author)
-        print "committer %s" % (committer)
-        print "data %d" % (len(desc))
-        print desc
+        puts(b"commit %s/%s" % (prefix, ename))
+        puts(b"mark :%d" % (marks.get_mark(c.hex())))
+        puts(b"author %s" % (author))
+        puts(b"committer %s" % (committer))
+        puts(b"data %d" % (len(desc)))
+        puts(desc)
 
         if len(parents) > 0:
-            print "from :%s" % (rev_to_mark(parents[0]))
+            puts(b"from :%u" % (rev_to_mark(parents[0])))
             if len(parents) > 1:
-                print "merge :%s" % (rev_to_mark(parents[1]))
+                puts(b"merge :%u" % (rev_to_mark(parents[1])))
 
         for f in removed:
-            print "D %s" % (fix_file_path(f))
+            puts(b"D %s" % (fix_file_path(f)))
         for f in modified_final:
-            print "M %s :%u %s" % f
-        print
+            puts(b"M %s :%u %s" % f)
+        puts()
 
         if (progress % 100 == 0):
-            print "progress revision %d '%s' (%d/%d)" % (rev, name, progress, total)
+            puts(b"progress revision %d '%s' (%d/%d)" % (rev, name, progress, total))
 
     # make sure the ref is updated
-    print "reset %s/%s" % (prefix, ename)
-    print "from :%u" % rev_to_mark(head)
-    print
+    puts(b"reset %s/%s" % (prefix, ename))
+    puts(b"from :%u" % rev_to_mark(head))
+    puts()
 
     pending_revs = set(revs) - notes
     if pending_revs:
-        desc = "Notes for %s\n" % (name)
+        desc = b"Notes for %s\n" % (name)
         update_notes([repo[rev].hex() for rev in pending_revs], desc, False)
         notes.update(pending_revs)
 
 def export_tag(repo, tag):
-    export_ref(repo, tag, 'tags', scmutil.revsingle(repo, hgref(tag)))
+    export_ref(repo, tag, b'tags', scmutil.revsingle(repo, hgref(tag)))
 
 def export_bookmark(repo, bmark):
     head = bmarks[hgref(bmark)]
-    export_ref(repo, bmark, 'bookmarks', head)
+    export_ref(repo, bmark, b'bookmarks', head)
 
 def export_branch(repo, branch):
     tip = get_branch_tip(repo, branch)
     head = repo[tip]
-    export_ref(repo, branch, 'branches', head)
+    export_ref(repo, branch, b'branches', head)
 
 def export_head(repo):
-    export_ref(repo, g_head[0], 'bookmarks', g_head[1])
+    export_ref(repo, g_head[0], b'bookmarks', g_head[1])
 
 def do_capabilities(parser):
-    print "import"
+    puts(b"import")
     if capability_push:
-        print "push"
+        puts(b"push")
     else:
-        print "export"
-    print "refspec refs/heads/branches/*:%s/branches/*" % prefix
-    print "refspec refs/heads/*:%s/bookmarks/*" % prefix
-    print "refspec refs/tags/*:%s/tags/*" % prefix
+        puts(b"export")
+    puts(b"refspec refs/heads/branches/*:%s/branches/*" % prefix)
+    puts(b"refspec refs/heads/*:%s/bookmarks/*" % prefix)
+    puts(b"refspec refs/tags/*:%s/tags/*" % prefix)
 
-    path = os.path.join(marksdir, 'marks-git')
+    path = os.path.join(marksdir, b'marks-git')
 
     if os.path.exists(path):
-        print "*import-marks %s" % path
-    print "*export-marks %s" % path
-    print "option"
+        puts(b"*import-marks %s" % path)
+    puts(b"*export-marks %s" % path)
+    puts(b"option")
     # nothing really depends on the private refs being up to date
     # (export is limited anyway by the current git marks)
     # and they are not always updated correctly (dry-run, bookmark delete, ...)
     # (might resolve some dry-run breakage also)
-    print "no-private-update"
+    puts(b"no-private-update")
 
-    print
+    puts()
 
 def branch_tip(branch):
     return branches[branch][-1]
@@ -705,7 +806,7 @@ def get_branch_tip(repo, branch):
 
     # verify there's only one head
     if (len(heads) > 1):
-        warn("Branch '%s' has more than one head, consider merging" % branch)
+        warn(b"Branch '%s' has more than one head, consider merging" % branch)
         return branch_tip(hgref(branch))
 
     return heads[0]
@@ -713,29 +814,29 @@ def get_branch_tip(repo, branch):
 def list_head(repo, cur):
     global g_head, fake_bmark
 
-    if 'default' not in branches:
+    if b'default' not in branches:
         # empty repo
         return
 
-    node = repo[branch_tip('default')]
-    head = 'master' if 'master' not in bmarks else 'default'
+    node = repo[branch_tip(b'default')]
+    head = b'master' if b'master' not in bmarks else b'default'
     fake_bmark = head
     bmarks[head] = node
 
     head = gitref(head)
-    print "@refs/heads/%s HEAD" % head
+    puts(b"@refs/heads/%s HEAD" % head)
     g_head = (head, node)
 
 def do_list(parser, branchmap):
     repo = parser.repo
-    for bmark, node in bookmarks.listbookmarks(repo).iteritems():
+    for bmark, node in compat.iteritems(bookmarks.listbookmarks(repo)):
         bmarks[bmark] = repo[node]
 
     cur = repo.dirstate.branch()
 
-    for branch, heads in branchmap.iteritems():
+    for branch, heads in compat.iteritems(branchmap):
         # only open heads
-        heads = [h for h in heads if 'close' not in repo.changelog.read(h)[5]]
+        heads = [h for h in heads if b'close' not in repo.changelog.read(h)[5]]
         if heads:
             branches[branch] = heads
 
@@ -748,11 +849,11 @@ def do_list(parser, branchmap):
             try:
                 ignore_re.append(re.compile(exp.strip()))
             except:
-                warn("Invalid regular expression '%s'" % (exp))
+                warn(b"Invalid regular expression '%s'" % (exp))
     def ignore(kind, name):
         for r in ignore_re:
             if r.search(name):
-                warn("Ignoring matched %s %s" % (kind, name))
+                warn(b"Ignoring matched %s %s" % (kind, name))
                 return True
         return False
 
@@ -761,64 +862,64 @@ def do_list(parser, branchmap):
     # that avoids having the ref status reported as a new branch/tag
     # (though it will be marked as FETCH_FIRST prior to push,
     # but that's ok as we will provide proper status)
-    for_push = (parser.line.find('for-push') >= 0)
-    sha1 = 'f' * 40 if (capability_push and for_push) else '?'
+    for_push = (parser.line.find(b'for-push') >= 0)
+    sha1 = b'f' * 40 if (capability_push and for_push) else b'?'
 
     if track_branches:
         for branch in branches:
-            if not ignore('branch', branch):
-                print "%s refs/heads/branches/%s" % (sha1, gitref(branch))
+            if not ignore(b'branch', branch):
+                puts(b"%s refs/heads/branches/%s" % (sha1, gitref(branch)))
 
     for bmark in bmarks:
-        if bmarks[bmark].hex() == '0' * 40:
-            warn("Ignoring invalid bookmark '%s'", bmark)
+        if bmarks[bmark].hex() == b'0' * 40:
+            warn(b"Ignoring invalid bookmark '%s'" % bmark)
         elif not ignore('bookmark', bmark):
-            print "%s refs/heads/%s" % (sha1, gitref(bmark))
+            puts(b"%s refs/heads/%s" % (sha1, gitref(bmark)))
 
     for tag, node in repo.tagslist():
-        if tag == 'tip':
+        if tag == b'tip':
             continue
-        if not ignore('tag', tag):
-            print "%s refs/tags/%s" % (sha1, gitref(tag))
+        if not ignore(b'tag', tag):
+            puts(b"%s refs/tags/%s" % (sha1, gitref(tag)))
 
-    print
+    puts()
 
 def do_import(parser):
     repo = parser.repo
 
-    path = os.path.join(marksdir, 'marks-git')
+    path = os.path.join(marksdir, b'marks-git')
 
-    print "feature done"
+    puts(b"feature done")
     if os.path.exists(path):
-        print "feature import-marks=%s" % path
-    print "feature export-marks=%s" % path
-    print "feature force"
-    sys.stdout.flush()
+        puts(b"feature import-marks=%s" % path)
+    puts(b"feature export-marks=%s" % path)
+    puts(b"feature force")
+    compat.stdout.flush()
 
     tmp = encoding.encoding
-    encoding.encoding = 'utf-8'
+    encoding.encoding = b'utf-8'
 
     # lets get all the import lines
-    while parser.check('import'):
+    while parser.check(b'import'):
         ref = parser[1]
 
-        if (ref == 'HEAD'):
+        if (ref == b'HEAD'):
             export_head(repo)
-        elif ref.startswith('refs/heads/branches/'):
-            branch = ref[len('refs/heads/branches/'):]
+        elif ref.startswith(b'refs/heads/branches/'):
+            branch = ref[len(b'refs/heads/branches/'):]
             export_branch(repo, branch)
-        elif ref.startswith('refs/heads/'):
-            bmark = ref[len('refs/heads/'):]
+        elif ref.startswith(b'refs/heads/'):
+            bmark = ref[len(b'refs/heads/'):]
             export_bookmark(repo, bmark)
-        elif ref.startswith('refs/tags/'):
-            tag = ref[len('refs/tags/'):]
+        elif ref.startswith(b'refs/tags/'):
+            tag = ref[len(b'refs/tags/'):]
             export_tag(repo, tag)
 
         parser.next()
 
     encoding.encoding = tmp
 
-    print 'done'
+    puts(b'done')
 
 def parse_blob(parser):
     parser.next()
@@ -846,21 +947,20 @@ def get_merge_files(repo, p1, p2, files):
             files[e] = f
 
 def split_line_pathnames(line):
-    if line[2] != '"':
-        return line.split(' ', 2)
+    if line[2] != compat.char(b'"'):
+        return line.split(b' ', 2)
     else:
-        t = line[0]
         p = 3
         while p >= 0:
-            if line[p] == '"' and line[p - 1] != '\\':
-                return line[0], line[2:p+1], line[p+2:]
-            p = line.find('"', p + 1)
+            if line[p] == compat.char(b'"') and line[p - 1] != compat.char(b'\\'):
+                return compat.char(line[0]), line[2:p+1], line[p+2:]
+            p = line.find(b'"', p + 1)
         # hm, should not happen
-        die('Malformed file command: %s' % (line))
+        die(b'Malformed file command: %s' % (line))
 
 def c_style_unescape(string):
-    if string[0] == string[-1] == '"':
-        return string.decode('string-escape')[1:-1]
+    if string[0] == string[-1] == compat.char(b'"'):
+        return compat.unescape(string[1:-1])
     return string
 
 # sigh; handle context creation for various (incompatible) versions
@@ -887,46 +987,46 @@ def parse_commit(parser):
     parser.next()
     data = parser.get_data()
     parser.next()
-    if parser.check('from'):
+    if parser.check(b'from'):
         from_mark = parser.get_mark()
         parser.next()
-    if parser.check('merge'):
+    if parser.check(b'merge'):
         merge_mark = parser.get_mark()
         parser.next()
-        if parser.check('merge'):
+        if parser.check(b'merge'):
             die('octopus merges are not supported yet')
 
     # fast-export adds an extra newline
-    if data[-1] == '\n':
+    if data[-1] == compat.char(b'\n'):
         data = data[:-1]
 
     files = {}
 
     for line in parser:
-        if parser.check('M'):
-            t, m, mark_ref, path = line.split(' ', 3)
-            if m == '160000':
+        if parser.check(b'M'):
+            t, m, mark_ref, path = line.split(b' ', 3)
+            if m == b'160000':
                 # This is a submodule -- there is no reasonable
                 # way to import it.
-                blob_data = "[git-remote-hg: skipped import of submodule at %s]" % mark_ref
+                blob_data = b"[git-remote-hg: skipped import of submodule at %s]" % mark_ref
             else:
                 mark = int(mark_ref[1:])
                 blob_data = blob_marks[mark]
             f = { 'mode': hgmode(m), 'data': blob_data }
-        elif parser.check('D'):
-            t, path = line.split(' ', 1)
+        elif parser.check(b'D'):
+            t, path = line.split(b' ', 1)
             f = { 'deleted': True }
-        elif parser.check('R'):
+        elif parser.check(b'R'):
             t, old, path = split_line_pathnames(line)
             old = c_style_unescape(old)
             f = { 'rename': old }
             # also mark old deleted
             files[old] = { 'deleted': True }
-        elif parser.check('C'):
+        elif parser.check(b'C'):
             t, old, path = split_line_pathnames(line)
             f = { 'rename': c_style_unescape(old) }
         else:
-            die('Unknown file command: %s' % line)
+            die(b'Unknown file command: %s' % line)
         path = c_style_unescape(path)
         files[path] = files.get(path, {})
         files[path].update(f)
@@ -944,7 +1044,7 @@ def parse_commit(parser):
         if hgrev:
             hghelper = parser.context.hghelper
             if not hghelper:
-                print "error %s rejected not pushing hg based commit %s" % (ref, gitcommit)
+                puts(b"error %s rejected not pushing hg based commit %s" % (ref, gitcommit))
                 raise UserWarning("check-hg-commits")
             # must be in some local repo
             # find it and push it to the target local repo
@@ -956,20 +1056,20 @@ def parse_commit(parser):
                     # pretty bad, if identified as hg revision, we should have it somewhere
                     # but is possible if the originating repo has been removed now
                     # warn elaborately and fail given the current settings
-                    description = "\n" \
-                        "commit %s corresponds \nto hg revision %s,\n" \
-                        "but could not find latter in any fetched hg repo.\n" \
-                        "Please resolve the inconsistency or disable pushing hg commits" \
+                    description = b"\n" \
+                        b"commit %s corresponds \nto hg revision %s,\n" \
+                        b"but could not find latter in any fetched hg repo.\n" \
+                        b"Please resolve the inconsistency or disable pushing hg commits" \
                             % (gitcommit, hgrev)
                     die(description)
-                warn('Pushing hg changeset %s for %s' % (hgrev, gitcommit))
+                warn(b'Pushing hg changeset %s for %s' % (hgrev, gitcommit))
                 # target is local repo so should have a root
                 # force push since otherwise forcibly commit anyway
                 # (and needed for multiple head case etc)
                 push(srepo, hg.peer(srepo.ui, {}, parser.repo.root), [hgbin(hgrev)], True)
             else:
                 # could already be present, particularly in shared proxy repo
-                warn('Using hg changeset %s for %s' % (hgrev, gitcommit))
+                warn(b'Using hg changeset %s for %s' % (hgrev, gitcommit))
             # track mark and are done here
             parsed_refs[ref] = hgrev
             marks.new_mark(hgrev, commit_mark)
@@ -991,8 +1091,8 @@ def parse_commit(parser):
                 return make_memfilectx(repo, memctx, f, ctx.data(), is_link, is_exec)
             else:
                 return of['ctx']
-        is_exec = of['mode'] == 'x'
-        is_link = of['mode'] == 'l'
+        is_exec = of['mode'] == b'x'
+        is_link = of['mode'] == b'l'
         rename = of.get('rename', None)
         return make_memfilectx(repo, memctx, f, of['data'], is_link, is_exec, rename)
 
@@ -1002,17 +1102,17 @@ def parse_commit(parser):
     extra = {}
 
     if committer != author:
-        extra['committer'] = "%s %u %u" % committer
+        extra[b'committer'] = b"%s %u %u" % committer
 
     if from_mark:
         p1 = mark_to_rev(from_mark)
     else:
-        p1 = '0' * 40
+        p1 = b'0' * 40
 
     if merge_mark:
         p2 = mark_to_rev(merge_mark)
     else:
-        p2 = '0' * 40
+        p2 = b'0' * 40
 
     #
     # If files changed from any of the parents, hg wants to know, but in git if
@@ -1027,31 +1127,31 @@ def parse_commit(parser):
         get_file_metadata(repo, p1, files)
 
     # Check if the ref is supposed to be a named branch
-    if ref.startswith('refs/heads/branches/'):
-        branch = ref[len('refs/heads/branches/'):]
-        extra['branch'] = hgref(branch)
+    if ref.startswith(b'refs/heads/branches/'):
+        branch = ref[len(b'refs/heads/branches/'):]
+        extra[b'branch'] = hgref(branch)
 
     if mode == 'hg':
-        i = data.find('\n--HG--\n')
+        i = data.find(b'\n--HG--\n')
         if i >= 0:
-            tmp = data[i + len('\n--HG--\n'):].strip()
-            for k, v in [e.split(' : ', 1) for e in tmp.split('\n')]:
-                if k == 'rename':
-                    old, new = v.split(' => ', 1)
+            tmp = data[i + len(b'\n--HG--\n'):].strip()
+            for k, v in [e.split(b' : ', 1) for e in tmp.split(b'\n')]:
+                if k == b'rename':
+                    old, new = v.split(b' => ', 1)
                     files[new]['rename'] = old
-                elif k == 'branch':
+                elif k == b'branch':
                     extra[k] = v
-                elif k == 'extra':
-                    ek, ev = v.split(' : ', 1)
-                    extra[ek] = urllib.unquote(ev)
+                elif k == b'extra':
+                    ek, ev = v.split(b' : ', 1)
+                    extra[ek] = compat.urlunquote(ev)
             data = data[:i]
 
     ctx = context.memctx(repo, (p1, p2), data,
-            files.keys(), getfilectx,
+            list(files.keys()), getfilectx,
             user, (date, tz), extra)
 
     tmp = encoding.encoding
-    encoding.encoding = 'utf-8'
+    encoding.encoding = b'utf-8'
 
     node = hghex(repo.commitctx(ctx))
 
@@ -1066,10 +1166,10 @@ def parse_reset(parser):
     ref = parser[1] if not remoteref else remoteref
     parser.next()
     # ugh
-    if parser.check('commit'):
+    if parser.check(b'commit'):
         parse_commit(parser)
         return
-    if not parser.check('from'):
+    if not parser.check(b'from'):
         return
     from_mark = parser.get_mark()
     parser.next()
@@ -1094,7 +1194,7 @@ def parse_tag(parser):
         rev = mark_to_rev(from_mark)
     except KeyError:
         rev = None
-    parsed_refs['refs/tags/' + name] = rev
+    parsed_refs[b'refs/tags/' + name] = rev
 
     parsed_tags[name] = (tagger, data)
 
@@ -1108,12 +1208,12 @@ def write_tag(repo, tag, node, msg, author):
             fctx = tip.filectx(f)
             data = fctx.data()
         except error.LookupError:
-            data = ""
-        content = data + "%s %s\n" % (node, tag)
+            data = b""
+        content = data + b"%s %s\n" % (node, tag)
         return make_memfilectx(repo, memctx, f, content, False, False, None)
 
     p1 = tip.hex()
-    p2 = '0' * 40
+    p2 = b'0' * 40
     if author:
         user, date, tz = author
         date_tz = (date, tz)
@@ -1121,7 +1221,7 @@ def write_tag(repo, tag, node, msg, author):
         cmd = ['git', 'var', 'GIT_COMMITTER_IDENT']
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
         output, _ = process.communicate()
-        m = re.match('^.* <.*>', output)
+        m = re.match(b'^.* <.*>', output)
         if m:
             user = m.group(0)
         else:
@@ -1129,11 +1229,11 @@ def write_tag(repo, tag, node, msg, author):
         date_tz = None
 
     ctx = context.memctx(repo, (p1, p2), msg,
-            ['.hgtags'], getfilectx,
-            user, date_tz, {'branch': branch})
+            [b'.hgtags'], getfilectx,
+            user, date_tz, {b'branch': branch})
 
     tmp = encoding.encoding
-    encoding.encoding = 'utf-8'
+    encoding.encoding = b'utf-8'
 
     tagnode = repo.commitctx(ctx)
 
@@ -1142,7 +1242,7 @@ def write_tag(repo, tag, node, msg, author):
     return (tagnode, branch)
 
 def checkheads_bmark(repo, ref, ctx, force):
-    bmark = ref[len('refs/heads/'):]
+    bmark = ref[len(b'refs/heads/'):]
     if bmark not in bmarks:
         # new bmark
         return True
@@ -1151,7 +1251,7 @@ def checkheads_bmark(repo, ref, ctx, force):
     ctx_new = ctx
 
     if ctx.rev() is None:
-        print "error %s unknown" % ref
+        puts(b"error %s unknown" % ref)
         return False
 
     # replaced around Mercurial 4.7
@@ -1159,9 +1259,9 @@ def checkheads_bmark(repo, ref, ctx, force):
         else repo.changelog.descendant
     if not isancestor(ctx_old.rev(), ctx_new.rev()):
         if force:
-            print "ok %s forced update" % ref
+            puts(b"ok %s forced update" % ref)
         else:
-            print "error %s non-fast forward" % ref
+            puts(b"error %s non-fast forward" % ref)
             return False
 
     return True
@@ -1176,14 +1276,14 @@ def checkheads(repo, remote, p_revs, force):
     new = {}
     ret = True
 
-    for node, ref in p_revs.iteritems():
+    for node, ref in compat.iteritems(p_revs):
         ctx = repo[node]
         branch = ctx.branch()
         if branch not in remotemap:
             # new branch
             continue
-        if not ref.startswith('refs/heads/branches'):
-            if ref.startswith('refs/heads/'):
+        if not ref.startswith(b'refs/heads/branches'):
+            if ref.startswith(b'refs/heads/'):
                 if not checkheads_bmark(repo, ref, ctx, force):
                     ret = False
 
@@ -1191,7 +1291,7 @@ def checkheads(repo, remote, p_revs, force):
             continue
         new.setdefault(branch, []).append(ctx.rev())
 
-    for branch, heads in new.iteritems():
+    for branch, heads in compat.iteritems(new):
         old = [repo.changelog.rev(x) for x in remotemap[branch]]
         for rev in heads:
             if check_version(2, 3):
@@ -1211,9 +1311,9 @@ def checkheads(repo, remote, p_revs, force):
             node = repo.changelog.node(rev)
             ref = p_revs[node]
             if force:
-                print "ok %s forced update" % ref
+                puts(b"ok %s forced update" % ref)
             else:
-                print "error %s non-fast forward" % ref
+                puts(b"error %s non-fast forward" % ref)
                 ret = False
 
     return ret
@@ -1233,10 +1333,10 @@ def push_unsafe(repo, remote, p_revs, force):
 
     if check_version(4, 0):
         if hasattr(changegroup, 'getlocalchangegroup'):
-            cg = changegroup.getlocalchangegroup(repo, 'push', outgoing)
+            cg = changegroup.getlocalchangegroup(repo, b'push', outgoing)
         else:
             # as of about version 4.4
-            cg = changegroup.makechangegroup(repo, outgoing, '01', 'push')
+            cg = changegroup.makechangegroup(repo, outgoing, b'01', b'push')
     elif check_version(3, 2):
         cg = changegroup.getchangegroup(repo, 'push', heads=list(p_revs), common=common)
     elif check_version(3, 0):
@@ -1244,32 +1344,32 @@ def push_unsafe(repo, remote, p_revs, force):
     else:
         cg = repo.getbundle('push', heads=list(p_revs), common=common)
 
-    unbundle = remote.capable('unbundle')
+    unbundle = remote.capable(b'unbundle')
     if unbundle:
         if force:
-            remoteheads = ['force']
-        ret = remote.unbundle(cg, remoteheads, 'push')
+            remoteheads = [b'force']
+        ret = remote.unbundle(cg, remoteheads, b'push')
     else:
-        ret = remote.addchangegroup(cg, 'push', repo.url())
+        ret = remote.addchangegroup(cg, b'push', repo.url())
 
-    phases = remote.listkeys('phases')
+    phases = remote.listkeys(b'phases')
     if phases:
         for head in p_revs:
             # update to public
-            remote.pushkey('phases', hghex(head), '1', '0')
+            remote.pushkey(b'phases', hghex(head), b'1', b'0')
 
     return ret
 
 def push(repo, remote, p_revs, force):
     if hasattr(remote, 'canpush') and not remote.canpush():
-        print "error cannot push"
+        puts(b"error cannot push")
 
     if not p_revs:
         # nothing to push
         return
 
     lock = None
-    unbundle = remote.capable('unbundle')
+    unbundle = remote.capable(b'unbundle')
     if not unbundle:
         lock = remote.lock()
     try:
@@ -1282,11 +1382,11 @@ def push(repo, remote, p_revs, force):
 
 def bookmark_is_fake(bmark, real_bmarks):
     return bmark == fake_bmark or \
-            (bmark == 'master' and bmark not in real_bmarks)
+            (bmark == b'master' and bmark not in real_bmarks)
 
 def do_export(parser):
     do_push_hg(parser)
-    print
+    puts()
 
 def do_push_hg(parser):
     global parsed_refs, parsed_tags
@@ -1308,75 +1408,75 @@ def do_push_hg(parser):
         if not hgrev:
             # maybe the notes are not updated
             # happens only on fetch for now ... let's ask for that
-            print "error %s fetch first" % remoteref
+            puts("error %s fetch first" % remoteref)
             return False
         parsed_refs[remoteref] = hgrev
         # now make parser happy
-        parser.line = 'done'
+        parser.line = b'done'
 
-    for line in parser.each_block('done'):
-        if parser.check('blob'):
+    for line in parser.each_block(b'done'):
+        if parser.check(b'blob'):
             parse_blob(parser)
-        elif parser.check('commit'):
+        elif parser.check(b'commit'):
             parse_commit(parser)
-        elif parser.check('reset'):
+        elif parser.check(b'reset'):
             parse_reset(parser)
-        elif parser.check('tag'):
+        elif parser.check(b'tag'):
             parse_tag(parser)
-        elif parser.check('feature'):
+        elif parser.check(b'feature'):
             pass
         else:
-            die('unhandled export command: %s' % line)
+            die(b'unhandled export command: %s' % line)
 
-    for ref, node in parsed_refs.iteritems():
+    for ref, node in compat.iteritems(parsed_refs):
         bnode = hgbin(node) if node else None
-        if ref.startswith('refs/heads/branches'):
-            branch = ref[len('refs/heads/branches/'):]
+        if ref.startswith(b'refs/heads/branches'):
+            branch = ref[len(b'refs/heads/branches/'):]
             if branch in branches and bnode in branches[branch]:
                 # up to date
-                print "ok %s up to date" % ref
+                puts(b"ok %s up to date" % ref)
                 continue
 
             p_revs[bnode] = ref
-            print "ok %s" % ref
-        elif ref.startswith('refs/heads/'):
-            bmark = ref[len('refs/heads/'):]
+            puts(b"ok %s" % ref)
+        elif ref.startswith(b'refs/heads/'):
+            bmark = ref[len(b'refs/heads/'):]
             new = node
-            old = bmarks[bmark].hex() if bmark in bmarks else ''
+            old = bmarks[bmark].hex() if bmark in bmarks else b''
 
             if old == new:
-                print "ok %s up to date" % ref
+                puts(b"ok %s up to date" % ref)
                 continue
 
-            print "ok %s" % ref
+            puts(b"ok %s" % ref)
             if not bookmark_is_fake(bmark, parser.repo._bookmarks):
                 p_bmarks.append((ref, bmark, old, new))
 
             p_revs[bnode] = ref
-        elif ref.startswith('refs/tags/'):
+        elif ref.startswith(b'refs/tags/'):
             if dry_run:
-                print "ok %s" % ref
+                puts(b"ok %s" % ref)
                 continue
-            tag = ref[len('refs/tags/'):]
+            tag = ref[len(b'refs/tags/'):]
             tag = hgref(tag)
             author, msg = parsed_tags.get(tag, (None, None))
             if mode == 'git':
                 if not msg:
-                    msg = 'Added tag %s for changeset %s' % (tag, node[:12])
+                    msg = b'Added tag %s for changeset %s' % (tag, node[:12])
                 tagnode, branch = write_tag(parser.repo, tag, node, msg, author)
-                p_revs[tagnode] = 'refs/heads/branches/' + gitref(branch)
+                p_revs[tagnode] = b'refs/heads/branches/' + gitref(branch)
             else:
                 if hasattr(parser.repo, 'opener'):
-                    fp = parser.repo.opener('localtags', 'a')
+                    fp = parser.repo.opener(b'localtags', b'a')
                 else:
                   try:
-                      fp = parser.repo.vfs('localtags', 'r+')
+                      fp = parser.repo.vfs(b'localtags', b'r+')
                   except IOError:
-                      fp = parser.repo.vfs('localtags', 'a')
-                fp.write('%s %s\n' % (node, tag))
+                      fp = parser.repo.vfs(b'localtags', b'a')
+                fp.write(b'%s %s\n' % (node, tag))
                 fp.close()
             p_revs[bnode] = ref
-            print "ok %s" % ref
+            puts(b"ok %s" % ref)
         else:
             # transport-helper/fast-export bugs
             continue
@@ -1397,67 +1497,67 @@ def do_push_hg(parser):
             return
 
         # update remote bookmarks
-        remote_bmarks = peer.listkeys('bookmarks')
+        remote_bmarks = peer.listkeys(b'bookmarks')
         for ref, bmark, old, new in p_bmarks:
             if force_push:
-                old = remote_bmarks.get(bmark, '')
-            if not peer.pushkey('bookmarks', bmark, old, new):
+                old = remote_bmarks.get(bmark, b'')
+            if not peer.pushkey(b'bookmarks', bmark, old, new):
                 success = False
-                print "error %s" % ref
+                puts(b"error %s" % ref)
     else:
         # update local bookmarks
         for ref, bmark, old, new in p_bmarks:
             if not bookmarks.pushbookmark(parser.repo, bmark, old, new):
                 success = False
-                print "error %s" % ref
+                puts(b"error %s" % ref)
 
     return success
 
 def delete_bookmark(parser, ref):
-    bmark = ref[len('refs/heads/'):]
+    bmark = ref[len(b'refs/heads/'):]
     if bmark == fake_bmark:
         return False
     # delete local (proxy or target)
-    old = bmarks[bmark].hex() if bmark in bmarks else ''
+    old = bmarks[bmark].hex() if bmark in bmarks else b''
     if not old:
         return False
     ok = False
     if old:
-        ok = bookmarks.pushbookmark(parser.repo, bmark, old, '')
+        ok = bookmarks.pushbookmark(parser.repo, bmark, old, b'')
         # propagate to peer if appropriate
         if ok and peer:
-            remote_bmarks = peer.listkeys('bookmarks')
-            old = remote_bmarks.get(bmark, '')
-            ok = peer.pushkey('bookmarks', bmark, old, '')
+            remote_bmarks = peer.listkeys(b'bookmarks')
+            old = remote_bmarks.get(bmark, b'')
+            ok = peer.pushkey(b'bookmarks', bmark, old, b'')
         # delete private ref
         if ok:
-            pbookmark = '%s/heads/%s' % (prefix, bmark)
+            pbookmark = b'%s/heads/%s' % (prefix, bmark)
             subprocess.call(['git', 'update-ref', '-d', pbookmark])
     return ok
 
 def do_push_refspec(parser, refspec, revs):
     global force_push
 
-    force = (refspec[0] == '+')
-    refs = refspec.strip('+').split(':')
+    force = (refspec[0] == compat.char(b'+'))
+    refs = refspec.strip(b'+').split(b':')
     # check for delete
-    if (not refs[0]) and refs[1].startswith('refs/heads') and \
-            not refs[1].startswith('refs/heads/branches'):
+    if (not refs[0]) and refs[1].startswith(b'refs/heads') and \
+            not refs[1].startswith(b'refs/heads/branches'):
         if not dry_run and not delete_bookmark(parser, refs[1]):
-            print "error %s could not delete"% (refs[1])
+            puts(b"error %s could not delete "% (refs[1]))
         else:
-            print "ok %s" % (refs[1])
+            puts(b"ok %s" % (refs[1]))
         return
     # sanity check on remote ref
-    if not (refs[1].startswith('refs/heads') or refs[1].startswith('refs/tags')):
-        print "error %s refspec not supported " % refs[1]
+    if not (refs[1].startswith(b'refs/heads') or refs[1].startswith(b'refs/tags')):
+        puts(b"error %s refspec not supported " % refs[1])
         return
     ctx = ParserContext()
     if refs[0] != refs[1]:
         # would work and tag as requested, but pushing to a hg permanent branch
         # based on a rename rather than a git branch is probably not a good idea
-        if refs[1].startswith('refs/heads/branches'):
-            print "error %s not allowed for permanent branch" % refs[1]
+        if refs[1].startswith(b'refs/heads/branches'):
+            puts(b"error %s not allowed for permanent branch" % refs[1])
             return
         ctx.remoteref = refs[1]
         ctx.localref = refs[0]
@@ -1467,19 +1567,19 @@ def do_push_refspec(parser, refspec, revs):
     if not fast_export_options:
         fast_export_options = '-M -C'
     cmd.extend(fast_export_options.strip().split())
-    marks = os.path.join(marksdir, 'marks-git')
+    marks = os.path.join(marksdir, b'marks-git')
     if os.path.exists(marks):
-        cmd.append('--import-marks=%s' % marks)
+        cmd.append(b'--import-marks=%s' % marks)
     # optionally reuse existing hg commits in local repos
     check_hg_commits = get_config('remote-hg.check-hg-commits').strip()
-    use_hg_commits = check_hg_commits in ('fail', 'push')
+    use_hg_commits = check_hg_commits in (b'fail', b'push')
     # no commit of marks if dry_run
     # and only commit if all went ok,
     # otherwise some commits may no longer be exported next time/try around
-    tmpmarks = ''
+    tmpmarks = b''
     if use_hg_commits or not dry_run:
-        tmpmarks = os.path.join(marksdir, 'marks-git-%d' % (os.getpid()))
-        cmd.append('--export-marks=%s' % tmpmarks)
+        tmpmarks = os.path.join(marksdir, b'marks-git-%d' % (os.getpid()))
+        cmd.append(b'--export-marks=%s' % tmpmarks)
     cmd.append(refs[0])
     # a parameter would obviously be nicer here ...
     force_push = force
@@ -1490,7 +1590,7 @@ def do_push_refspec(parser, refspec, revs):
             # we need the mapping from marks to commit
             # so store the output first to a file (and marks get saved also),
             # and then process that file
-            tmpfastexport = open(os.path.join(marksdir, 'git-fast-export-%d' % (os.getpid())), 'w+b')
+            tmpfastexport = open(os.path.join(marksdir, b'git-fast-export-%d' % (os.getpid())), 'w+b')
             subprocess.check_call(cmd, stdin=None, stdout=tmpfastexport)
             try:
                 import imp
@@ -1500,7 +1600,7 @@ def do_push_refspec(parser, refspec, revs):
                 ctx.hghelper.init_git(gitdir)
                 ctx.gitmarks = ctx.hghelper.GitMarks(tmpmarks)
                 # let processing know it should not bother pushing if not requested
-                if check_hg_commits != 'push':
+                if check_hg_commits != b'push':
                     ctx.hghelper = None
             except:
                 die("check-hg-commits setup failed; is git-hg-helper also installed?")
@@ -1538,41 +1638,41 @@ def update_notes(revs, desc, run_import):
 
     if run_import:
         # spin up fast-import
-        gitmarks = os.path.join(marksdir, 'marks-git')
+        gitmarks = os.path.join(marksdir, b'marks-git')
         # marks should exist by now
         # no export of marks since notes commits are not relevant
         proc = subprocess.Popen(['git', 'fast-import', '--done', '--quiet',
-            '--import-marks=%s' % gitmarks], stdin=subprocess.PIPE, stdout=sys.stderr)
+            b'--import-marks=%s' % gitmarks], stdin=subprocess.PIPE, stdout=sys.stderr)
         # now feed fast-import
         dest = proc.stdin
     else:
         proc = None
-        dest = sys.stdout
+        dest = compat.stdout
 
     note_mark = marks.next_mark()
-    ref = "refs/notes/hg"
-    dest.write("commit %s\n" % ref)
-    dest.write("mark :%d\n" % (note_mark))
-    dest.write("committer remote-hg <> %d %s\n" % (ptime.time(), gittz(ptime.timezone)))
-    dest.write("data %d\n" % (len(desc)))
-    dest.write(desc + '\n')
+    ref = b"refs/notes/hg"
+    dest.write(b"commit %s\n" % ref)
+    dest.write(b"mark :%d\n" % (note_mark))
+    dest.write(b"committer remote-hg <> %d %s\n" % (ptime.time(), gittz(ptime.timezone)))
+    dest.write(b"data %d\n" % (len(desc)))
+    dest.write(desc + b'\n')
     # continue incrementally on current notes branch (whenever possible)
     # to avoid wiping out present content upon fetch of new repo
     # but track along with the previous ref (e.g. as import goes along)
     current_note = rev_parse(ref)
     if current_note and not marks.last_note:
-        dest.write('from %s^0\n' % (ref))
+        dest.write(b'from %s^0\n' % (ref))
     elif marks.last_note:
-        dest.write('from :%u\n' % (marks.last_note))
+        dest.write(b'from :%u\n' % (marks.last_note))
     for rev in revs:
-        dest.write("N inline :%u\n" % marks.from_rev(rev))
-        dest.write("data %d\n" % (len(rev)))
-        dest.write(rev + '\n')
-    dest.write('\n')
+        dest.write(b"N inline :%u\n" % marks.from_rev(rev))
+        dest.write(b"data %d\n" % (len(rev)))
+        dest.write(rev + b'\n')
+    dest.write(b'\n')
     marks.last_note = note_mark
 
     if proc:
-        dest.write('done\n')
+        dest.write(b'done\n')
         dest.flush()
         proc.wait()
         # fail hard if this fails
@@ -1584,42 +1684,42 @@ def update_notes(revs, desc, run_import):
 
 def do_push(parser):
     if os.environ.get('GIT_REMOTE_HG_DEBUG_PUSH'):
-        dump = ''
+        dump = b''
         for line in parser:
-            dump += line + '\n'
-        die('DEBUG push:\n%s' % (dump))
+            dump += line + b'\n'
+        die(b'DEBUG push:\n%s' % (dump))
     revs = []
     for line in parser:
-        if parser.check('push'):
+        if parser.check(b'push'):
             localrevs = []
-            do_push_refspec(parser, line.lstrip('push '), localrevs)
+            do_push_refspec(parser, line.lstrip(b'push '), localrevs)
             revs.extend(localrevs)
         else:
-            die('unhandled push command: %s' % (line))
-    print
+            die(b'unhandled push command: %s' % (line))
+    puts()
     # at this stage, all external processes are done, marks files written
     # so we can use those to update notes
     # do so unconditionally because we can and should ....
-    update_notes(revs, "Update notes on push", True)
+    update_notes(revs, b"Update notes on push", True)
 
 def do_option(parser):
     global dry_run, force_push
-    _, key, value = parser.line.split(' ')
-    if key == 'dry-run':
-        dry_run = (value == 'true')
-        print 'ok'
-    elif key == 'force':
-        force_push = (value == 'true')
-        print 'ok'
+    _, key, value = parser.line.split(b' ')
+    if key == b'dry-run':
+        dry_run = (value == b'true')
+        puts(b'ok')
+    elif key == b'force':
+        force_push = (value == b'true')
+        puts(b'ok')
     else:
-        print 'unsupported'
+        puts(b'unsupported')
 
 def fix_path(alias, repo, orig_url):
-    url = urlparse.urlparse(orig_url, 'file')
-    if url.scheme != 'file' or os.path.isabs(os.path.expanduser(url.path)):
+    url = compat.urlparse(orig_url, b'file')
+    if url.scheme != b'file' or os.path.isabs(os.path.expanduser(url.path)):
         return
-    abs_url = urlparse.urljoin("%s/" % os.getcwd(), orig_url)
-    cmd = ['git', 'config', 'remote.%s.url' % alias, "hg::%s" % abs_url]
+    abs_url = compat.urljoin(b"%s/" % compat.getcwd(), orig_url)
+    cmd = ['git', 'config', b'remote.%s.url' % alias, b"hg::%s" % abs_url]
     subprocess.call(cmd)
 
 def select_private_refs(alias):
@@ -1627,11 +1727,11 @@ def select_private_refs(alias):
     # selection is easy, but let's also clean the refs of the alternative
     # in any case, will be recreated along the way as and when needed
     if show_private_refs:
-        path = "%s/refs" % (dirname)
+        path = b"%s/refs" % (dirname)
         if os.path.exists(path):
             shutil.rmtree(path, True)
         # in refs space
-        return 'refs/hg/%s' % alias
+        return b'refs/hg/%s' % alias
     else:
         refs = subprocess.Popen(['git', 'for-each-ref', \
             '--format=delete %(refname)', 'refs/hg'], stdout=subprocess.PIPE)
@@ -1639,17 +1739,17 @@ def select_private_refs(alias):
         refs.stdout.close()  # helps with SIGPIPE
         update.communicate()
         # keep private implementation refs really private
-        return 'hg/%s/refs' % alias
+        return b'hg/%s/refs' % alias
 
 def select_marks_dir(alias, gitdir, migrate):
-    dirname = os.path.join(gitdir, 'hg', alias)
-    private_gm = os.path.join(dirname, 'marks-git')
-    shared_dir = os.path.join(gitdir, 'hg')
-    shared_gm = os.path.join(shared_dir, 'marks-git')
-    shared_hgm = os.path.join(shared_dir, 'marks-hg')
+    dirname = os.path.join(gitdir, b'hg', alias)
+    private_gm = os.path.join(dirname, b'marks-git')
+    shared_dir = os.path.join(gitdir, b'hg')
+    shared_gm = os.path.join(shared_dir, b'marks-git')
+    shared_hgm = os.path.join(shared_dir, b'marks-hg')
     # not good in either case
     if os.path.exists(private_gm) and os.path.exists(shared_gm):
-        die('found both %s and %s' % (private_gm, shared_gm))
+        die(b'found both %s and %s' % (private_gm, shared_gm))
     # retrieve setting
     shared_marks = get_config('remote-hg.shared-marks').strip()
     # standardize to True, False or None
@@ -1676,13 +1776,13 @@ def select_marks_dir(alias, gitdir, migrate):
         seen_file = False
         while l:
             d = l.pop()
-            gitm = os.path.join(shared_dir, d, 'marks-git')
-            hgm = os.path.join(shared_dir, d, 'marks-hg')
+            gitm = os.path.join(shared_dir, d, b'marks-git')
+            hgm = os.path.join(shared_dir, d, b'marks-hg')
             # move marks to shared if no such yet (if origin or last one in line)
             if os.path.exists(gitm) and os.path.exists(hgm) and \
               not os.path.exists(shared_gm) and not os.path.exists(shared_hgm) and \
-              (d == 'origin' or not l):
-                warn('using marks of remote %s as shared marks' % (d))
+              (d == b'origin' or not l):
+                warn(b'using marks of remote %s as shared marks' % (d))
                 seen_file = True
                 os.rename(gitm, shared_gm)
                 os.rename(hgm, shared_hgm)
@@ -1697,21 +1797,21 @@ def select_marks_dir(alias, gitdir, migrate):
         if not os.path.exists(shared_gm) or not os.path.exists(shared_hgm):
             l = []
         for d in l:
-            if not os.path.isdir(os.path.join(shared_dir, d)) or d == '.hg':
+            if not os.path.isdir(os.path.join(shared_dir, d)) or d == b'.hg':
                 continue
-            gitm = os.path.join(shared_dir, d, 'marks-git')
-            hgm = os.path.join(shared_dir, d, 'marks-hg')
+            gitm = os.path.join(shared_dir, d, b'marks-git')
+            hgm = os.path.join(shared_dir, d, b'marks-hg')
             for p in ((shared_gm, gitm), (shared_hgm, hgm)):
                 if os.path.exists(p[0]):
                    shutil.copyfile(p[0], p[1])
                 # try to run helper gc
                 # only really important for a local repo (without proxy)
-            warn('seeded marks of %s with shared; performing gc' % d)
+            warn(b'seeded marks of %s with shared; performing gc' % d)
             try:
                 subprocess.check_call(['git-hg-helper', 'gc', '--check-hg', d],
                     stdout=sys.stderr)
             except:
-                warn('gc for %s failed' % d)
+                warn(b'gc for %s failed' % d)
             for p in (shared_gm, shared_hgm):
                 if os.path.exists(p):
                    os.remove(p)
@@ -1737,7 +1837,7 @@ def main(args):
 
     marks = None
     is_tmp = False
-    gitdir = os.environ.get('GIT_DIR', None)
+    gitdir = compat.getenv(b'GIT_DIR', None)
 
     if len(args) < 3:
         die('Not enough arguments.')
@@ -1757,26 +1857,26 @@ def main(args):
 
     if hg_git_compat:
         mode = 'hg'
-        bad_mail = 'none@none'
-        bad_name = ''
+        bad_mail = b'none@none'
+        bad_name = b''
     else:
         mode = 'git'
-        bad_mail = 'unknown'
-        bad_name = 'Unknown'
+        bad_mail = b'unknown'
+        bad_name = b'Unknown'
 
     if alias[4:] == url:
         is_tmp = True
-        alias = hashlib.sha1(alias).hexdigest()
+        alias = compat.to_b(hashlib.sha1(alias).hexdigest())
 
-    dirname = os.path.join(gitdir, 'hg', alias)
+    dirname = os.path.join(gitdir, b'hg', alias)
     branches = {}
     bmarks = {}
     blob_marks = {}
     filenodes = {}
     fake_bmark = None
     try:
-        version, _, extra = util.version().partition('+')
-        version = list(int(e) for e in version.split('.'))
+        version, _, extra = util.version().partition(b'+')
+        version = list(int(e) for e in version.split(b'.'))
         if extra:
             version[-1] += 1
         hg_version = tuple(version)
@@ -1796,7 +1896,7 @@ def main(args):
     if not is_tmp:
         fix_path(alias, peer or repo, url)
 
-    marks_path = os.path.join(marksdir, 'marks-hg')
+    marks_path = os.path.join(marksdir, b'marks-hg')
     marks = Marks(marks_path, repo)
 
     if sys.platform == 'win32':
@@ -1805,21 +1905,21 @@ def main(args):
 
     parser = Parser(repo)
     for line in parser:
-        if parser.check('capabilities'):
+        if parser.check(b'capabilities'):
             do_capabilities(parser)
-        elif parser.check('list'):
+        elif parser.check(b'list'):
             do_list(parser, branchmap)
-        elif parser.check('import'):
+        elif parser.check(b'import'):
             do_import(parser)
-        elif parser.check('export'):
+        elif parser.check(b'export'):
             do_export(parser)
-        elif parser.check('push'):
+        elif parser.check(b'push'):
             do_push(parser)
-        elif parser.check('option'):
+        elif parser.check(b'option'):
             do_option(parser)
         else:
-            die('unhandled command: %s' % line)
-        sys.stdout.flush()
+            die(b'unhandled command: %s' % line)
+        compat.stdout.flush()
 
     marks.store()
 
@@ -1829,4 +1929,4 @@ def bye():
 
 if __name__ == '__main__':
     atexit.register(bye)
-    sys.exit(main(sys.argv))
+    sys.exit(main([compat.decode_sysarg(a) for a in sys.argv]))

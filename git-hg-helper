@@ -16,13 +16,66 @@ import logging
 import threading
 
 # thanks go to git-remote-helper for some helper functions
+# likewise so for python2/3 compatibility
 
-def die(msg, *args):
-    sys.stderr.write('ERROR: %s\n' % (msg % args))
+# generic
+class basecompat:
+    @staticmethod
+    def char(c):
+      assert len(c) == 1
+      return c[0]
+
+if sys.version_info[0] == 3:
+    import locale
+    class compat(basecompat):
+        # sigh ... wonderful python3 ... as taken from Mercurial's pycompat
+        @staticmethod
+        def decode_sysarg(arg):
+            if os.name == r'nt':
+                return arg.encode("mbcs", "ignore")
+            else:
+                enc = (
+                    locale.getlocale()[1]
+                    or locale.getdefaultlocale()[1]
+                    or sys.getfilesystemencoding()
+                )
+                return arg.encode(enc, "surrogateescape")
+        # mostly used for straight 'cast' (not real unicode content)
+        @staticmethod
+        def to_b(s, *args):
+            if isinstance(s, str):
+                args = args or ['latin-1']
+                return s.encode(*args)
+            return s
+        stdin = sys.stdin.buffer
+        stdout = sys.stdout.buffer
+        stderr = sys.stderr.buffer
+        getcwd = os.getcwdb
+        getenv = os.getenvb if os.supports_bytes_environ else os.getenv
+else:
+    class compat(basecompat):
+        # life was simple in those days ...
+        @staticmethod
+        def to_b(s, *args):
+            return s
+        decode_sysarg = to_b
+        stdin = sys.stdin
+        stdout = sys.stdout
+        stderr = sys.stderr
+        getcwd = staticmethod(os.getcwd)
+        getenv = staticmethod(os.getenv)
+
+def puts(msg = b''):
+    compat.stdout.write(msg)
+    compat.stdout.write(b'\n')
+
+def die(msg):
+    compat.stderr.write(b'ERROR: %s\n' % compat.to_b(msg, 'utf-8'))
     sys.exit(1)
 
-def warn(msg, *args):
-    sys.stderr.write('WARNING: %s\n' % (msg % args))
+def warn(msg):
+    compat.stderr.write(b'WARNING: %s\n' % compat.to_b(msg, 'utf-8'))
+    compat.stderr.flush()
 
 def info(msg, *args):
     logger.info(msg, *args)
@@ -44,7 +97,7 @@ class GitHgRepo:
     def __init__(self, topdir=None, gitdir=None):
         if gitdir != None:
             self.gitdir = gitdir
-            self.topdir = os.path.join(gitdir, '..') # will have to do
+            self.topdir = os.path.join(gitdir, b'..') # will have to do
         else:
             self.topdir = None
             if not topdir:
@@ -53,7 +106,7 @@ class GitHgRepo:
                     if not os.path.exists('.git'):
                         # now we lost where we are
                         raise Exception('failed to determine topdir')
-                    topdir = '.'
+                    topdir = b'.'
             self.topdir = topdir
             self.gitdir = self.run_cmd(['rev-parse', '--git-dir']).strip()
             if not self.gitdir:
@@ -64,7 +117,7 @@ class GitHgRepo:
         self.hg_repos = {}
 
     def identity(self):
-        return '[%s|%s]' % (os.getcwd(), self.topdir)
+        return b'[%s|%s]' % (compat.getcwd(), self.topdir or b'')
 
     def start_cmd(self, args, **kwargs):
         cmd = ['git'] + args
@@ -82,7 +135,7 @@ class GitHgRepo:
         process = self.start_cmd(args, **kwargs)
         output = process.communicate()[0]
         if check and process.returncode != 0:
-            die('command failed: %s', ' '.join(cmd))
+            die(b'command failed: %s' % b' '.join([compat.to_b(a) for a in cmd]))
         return output
 
     def get_config(self, config, getall=False):
@@ -91,17 +144,17 @@ class GitHgRepo:
         return self.run_cmd(['config', get[getall] , config], stderr=None)
 
     def get_config_bool(self, config, default=False):
-        value = self.get_config(config).rstrip('\n')
-        if value == "true":
+        value = self.get_config(config).rstrip()
+        if value == b"true":
             return True
-        elif value == "false":
+        elif value == b"false":
             return False
         else:
             return default
 
     def get_hg_repo_url(self, remote):
-        url = self.get_config('remote.%s.url' % (remote))
-        if url and url[0:4] == 'hg::':
+        url = self.get_config(b'remote.%s.url' % (remote))
+        if url and url[0:4] == b'hg::':
             url = url[4:].strip()
         else:
             url = None
@@ -129,9 +182,9 @@ class GitHgRepo:
         for r in self.get_hg_repos():
             try:
                 hgpath = remotehg.select_marks_dir(r, self.gitdir, False)
-                m = remotehg.Marks(os.path.join(hgpath, 'marks-hg'), None)
+                m = remotehg.Marks(os.path.join(hgpath, b'marks-hg'), None)
                 mark = m.from_rev(rev)
-                m = GitMarks(os.path.join(hgpath, 'marks-git'))
+                m = GitMarks(os.path.join(hgpath, b'marks-git'))
                 return m.to_rev(mark)
             except:
                 pass
@@ -143,28 +196,28 @@ class GitHgRepo:
             return self.hg_repos
 
         # check any local hg repo to see if rev is in there
-        shared_path = os.path.join(self.gitdir, 'hg')
-        hg_path = os.path.join(shared_path, '.hg')
+        shared_path = os.path.join(self.gitdir, b'hg')
+        hg_path = os.path.join(shared_path, b'.hg')
         if os.path.exists(shared_path):
             repos = os.listdir(shared_path)
             for r in repos:
                 # skip the shared repo
-                if r == '.hg':
+                if r == b'.hg':
                     continue
                 # only dirs
                 if not os.path.isdir(os.path.join(shared_path, r)):
                     continue
-                local_path = os.path.join(shared_path, r, 'clone')
-                local_hg = os.path.join(local_path, '.hg')
+                local_path = os.path.join(shared_path, r, b'clone')
+                local_hg = os.path.join(local_path, b'.hg')
                 if not os.path.exists(local_hg):
                     # could be a local repo without proxy, fetch url
                     local_path = self.get_hg_repo_url(r)
                     if not local_path:
-                        warn('failed to find local hg for remote %s', r)
+                        warn(b'failed to find local hg for remote %s' % (r))
                         continue
                 else:
                     # make sure the shared path is always up-to-date
-                    util.writefile(os.path.join(local_hg, 'sharedpath'),
+                    util.writefile(os.path.join(local_hg, b'sharedpath'),
                         os.path.abspath(hg_path))
                 self.hg_repos[r] = os.path.join(local_path)
 
@@ -176,9 +229,9 @@ class GitHgRepo:
         repos = self.get_hg_repos()
         if r in repos:
             local_path = repos[r]
-            hushui = ui.ui()
-            hushui.setconfig('ui', 'interactive', 'off')
-            hushui.fout = open(os.devnull, 'w')
+            hushui = ui.ui.load() if hasattr(ui.ui, 'load') else ui.ui()
+            hushui.setconfig(b'ui', b'interactive', b'off')
+            hushui.fout = open(os.devnull, 'wb')
             return hg.repository(hushui, local_path)
 
     def find_hg_repo(self, rev):
@@ -201,7 +254,7 @@ class GitHgRepo:
         def __init__(self, repo, files):
             p1, p2, data = repo[None], '0' * 40, ''
             context.memctx.__init__(self, repo, (p1, p2),
-                data, files.keys(), self.getfilectx)
+                data, list(files.keys()), self.getfilectx)
             self.files = files
             self.remotehg = import_sibling('remotehg', 'git-remote-hg')
             self.remotehg.hg_version = hg_version
@@ -215,13 +268,13 @@ class GitHgRepo:
                 is_link, is_exec, rename)
 
     def read(self, relpath, rev=None):
-        rev = rev if rev else ':0'
-        obj = '%s:%s' % (rev, relpath)
+        rev = rev if rev else b':0'
+        obj = b'%s:%s' % (rev, relpath)
         # might complain bitterly to stderr if no subrepos so let's not show that
         return self.run_cmd(['show', obj])
 
     # see also subrepo.state
-    def state(self, remote='origin', rev=None):
+    def state(self, remote=b'origin', rev=None):
         """return a state dict, mapping subrepo paths configured in .hgsub
         to tuple: (source from .hgsub, revision from .hgsubstate, kind
         (key in types dict))
@@ -229,7 +282,7 @@ class GitHgRepo:
 
         # obtain relevant files' content from specified revision
         files = { }
-        for f in ('.hgsub', '.hgsubstate'):
+        for f in (b'.hgsub', b'.hgsubstate'):
             files[f] = self.read(f)
         log('state files for %s in revision %s:\n%s', remote, rev, files)
 
@@ -237,7 +290,7 @@ class GitHgRepo:
         # (rather than duplicating the admittedly simple parsing here)
         repo = self.get_hg_repo(remote)
         if not repo:
-            die('no hg repo for alias %s' % remote)
+            die(b'no hg repo for alias %s' % remote)
         ctx = self.dictmemctx(repo, files)
         # helpers moved around 4.6
         if hasattr(subrepo, 'state'):
@@ -252,21 +305,21 @@ class GitHgRepo:
         resolved = {}
         for s in state:
             src, rev, kind = state[s]
-            if not kind in ('hg', 'git'):
+            if not kind in (b'hg', b'git'):
                 warn('skipping unsupported subrepo type %s' % kind)
                 continue
             if not util.url(src).isabs():
                 parent = self.get_hg_repo_url(remote)
                 if not parent:
-                    die('could not determine repo url of %s' % remote)
+                    die(b'could not determine repo url of %s' % remote)
                 parent = util.url(parent)
-                parent.path = posixpath.join(parent.path or '', src)
+                parent.path = posixpath.join(parent.path or b'', src)
                 parent.path = posixpath.normpath(parent.path)
-                src = str(parent)
+                src = bytes(parent)
             # translate to git view url
-            if kind == 'hg':
-                src = 'hg::' + src
-            resolved[s] = (src.strip(), rev or '', kind)
+            if kind == b'hg':
+                src = b'hg::' + src
+            resolved[s] = (src.strip(), rev or b'', kind)
         log('resolved state %s', resolved)
         return resolved
 
@@ -277,12 +330,15 @@ class SubCommand:
         self.subcommand = subcmdname
         self.githgrepo = githgrepo
         self.argparser = self.argumentparser()
+        # list of str
+        self.args = []
 
     def argumentparser(self):
         return argparse.ArgumentParser()
 
     def get_remote(self, args):
         if len(args):
+            assert isinstance(args[0], bytes)
             return (args[0], args[1:])
         else:
             self.usage('missing argument: <remote-alias>')
@@ -295,7 +351,7 @@ class SubCommand:
 
     def execute(self, args):
         (self.options, self.args) = self.argparser.parse_known_args(args)
-        self.do(self.options, self.args)
+        self.do(self.options, [compat.decode_sysarg(a) for a in self.args])
 
     def usage(self, msg):
         if msg:
@@ -304,6 +360,7 @@ class SubCommand:
             self.argparser.print_usage(sys.stderr)
             sys.exit(2)
 
+    # args: list of bytes
     def do(self, options, args):
         pass
 
@@ -322,7 +379,7 @@ class HgRevCommand(SubCommand):
         if len(args):
             hgrev = self.githgrepo.get_hg_rev(args[0])
             if hgrev:
-                print hgrev
+                puts(hgrev)
 
 
 class GitMarks:
@@ -340,24 +397,24 @@ class GitMarks:
         if not os.path.exists(self.path):
             return
 
-        for l in file(self.path):
-            m, c = l.strip().split(' ', 2)
+        for l in open(self.path, 'rb'):
+            m, c = l.strip().split(b' ', 2)
             m = int(m[1:])
             self.marks[c] = m
             self.rev_marks[m] = c
 
     def store(self):
-        marks = self.rev_marks.keys()
+        marks = list(self.rev_marks.keys())
         marks.sort()
-        with open(self.path, 'w') as f:
+        with open(self.path, 'wb') as f:
             for m in marks:
-                f.write(':%d %s\n' % (m, self.rev_marks[m]))
+                f.write(b':%d %s\n' % (m, self.rev_marks[m]))
 
     def from_rev(self, rev):
         return self.marks[rev]
 
     def to_rev(self, mark):
-        return str(self.rev_marks[mark])
+        return self.rev_marks[mark]
 
 
 class GitRevCommand(SubCommand):
@@ -375,7 +432,7 @@ class GitRevCommand(SubCommand):
             rev = args[0]
             gitcommit = self.githgrepo.get_git_commit(rev)
             if gitcommit:
-                print gitcommit
+                puts(gitcommit)
 
 
 class GcCommand(SubCommand):
@@ -408,7 +465,7 @@ class GcCommand(SubCommand):
 
     def print_commits(self, gm, dest):
         for c in gm.marks.keys():
-            dest.write(c + '\n')
+            dest.write(c + b'\n')
         dest.flush()
         dest.close()
 
@@ -422,27 +479,27 @@ class GcCommand(SubCommand):
             if not remote in hg_repos:
                 self.usage('%s is not a valid hg remote' % (remote))
             hgpath = remotehg.select_marks_dir(remote, self.githgrepo.gitdir, False)
-            print "Loading hg marks ..."
-            hgm = remotehg.Marks(os.path.join(hgpath, 'marks-hg'), None)
-            print "Loading git marks ..."
-            gm = GitMarks(os.path.join(hgpath, 'marks-git'))
+            puts(b"Loading hg marks ...")
+            hgm = remotehg.Marks(os.path.join(hgpath, b'marks-hg'), None)
+            puts(b"Loading git marks ...")
+            gm = GitMarks(os.path.join(hgpath, b'marks-git'))
             repo = hg.repository(ui.ui(), hg_repos[remote]) if options.check_hg else None
             # git-gc may have dropped unreachable commits
             # (in particular due to multiple hg head cases)
             # need to drop those so git-fast-export or git-fast-import does not complain
-            print "Performing garbage collection on git commits ..."
+            puts(b"Performing garbage collection on git commits ...")
             process = self.githgrepo.start_cmd(['cat-file', '--batch-check'], \
                 stdin=subprocess.PIPE)
             thread = threading.Thread(target=self.print_commits, args=(gm, process.stdin))
             thread.start()
             git_marks = set({})
             for l in process.stdout:
-                sp = l.strip().split(' ', 2)
+                sp = l.strip().split(b' ', 2)
                 if sp[1] == 'commit':
                     git_marks.add(gm.from_rev(sp[0]))
             thread.join()
             # reduce down to marks that are common to both
-            print "Computing marks intersection ..."
+            puts(b"Computing marks intersection ...")
             common_marks = set(hgm.rev_marks.keys()).intersection(git_marks)
             hg_rev_marks = {}
             git_rev_marks = {}
@@ -453,7 +510,7 @@ class GcCommand(SubCommand):
                 git_rev_marks[m] = gm.rev_marks[m]
             # common marks will not not include any refs/notes/hg
             # let's not discard those casually, though they are not vital
-            print "Including notes commits ..."
+            puts(b"Including notes commits ...")
             revlist = self.githgrepo.start_cmd(['rev-list', 'refs/notes/hg'])
             for l in revlist.stdout.readlines():
                 c = l.strip()
@@ -465,24 +522,24 @@ class GcCommand(SubCommand):
                 git_rev_marks[hgm.last_note] = gm.rev_marks[hgm.last_note]
             # some status report
             if len(hgm.rev_marks) != len(hg_rev_marks):
-                print "Trimmed hg marks from #%d down to #%d" % (len(hgm.rev_marks), len(hg_rev_marks))
+                puts(b"Trimmed hg marks from #%d down to #%d" % (len(hgm.rev_marks), len(hg_rev_marks)))
             if len(gm.rev_marks) != len(git_rev_marks):
-                print "Trimmed git marks from #%d down to #%d" % (len(gm.rev_marks), len(git_rev_marks))
+                puts(b"Trimmed git marks from #%d down to #%d" % (len(gm.rev_marks), len(git_rev_marks)))
             # marks-hg tips irrelevant nowadays
             # now update and store
             if not options.dry_run:
                 # hg marks
-                print "Writing hg marks ..."
+                puts(b"Writing hg marks ...")
                 hgm.rev_marks = hg_rev_marks
                 hgm.marks = {}
-                for mark, rev in hg_rev_marks.iteritems():
+                for mark, rev in hg_rev_marks.items():
                     hgm.marks[rev] = mark
                 hgm.store()
                 # git marks
-                print "Writing git marks ..."
+                puts(b"Writing git marks ...")
                 gm.rev_marks = git_rev_marks
                 gm.marks = {}
-                for mark, rev in git_rev_marks.iteritems():
+                for mark, rev in git_rev_marks.items():
                     gm.marks[rev] = mark
                 gm.store()
 
@@ -491,9 +548,9 @@ class SubRepoCommand(SubCommand):
 
     def writestate(repo, state):
         """rewrite .hgsubstate in (outer) repo with these subrepo states"""
-        lines = ['%s %s\n' % (state[s][1], s) for s in sorted(state)
+        lines = [b'%s %s\n' % (state[s][1], s) for s in sorted(state)
                                                     if state[s][1] != nullstate[1]]
-        repo.wwrite('.hgsubstate', ''.join(lines), '')
+        repo.wwrite(b'.hgsubstate', b''.join(lines), b'')
 
     def argumentparser(self):
         #usage = '%%(prog)s %s [options] <remote>...' % (self.subcommand)
@@ -630,7 +687,8 @@ class SubRepoCommand(SubCommand):
         if args:
             # all arguments are registered, so should not have leftover
             # could be that main arguments were given to subcommands
-            warn('unparsed arguments: %s' % ' '.join(args))
+            warn(b'unparsed arguments: %s' % b' '.join(args))
+        options.remote = compat.decode_sysarg(options.remote)
         log('running subcmd options %s, args %s', options, args)
         # establish initial operation ctx
         ctx = self.subcontext(self.githgrepo)
@@ -640,10 +698,10 @@ class SubRepoCommand(SubCommand):
         log('running %s with options %s in context %s', \
             options.func, options, ctx)
         subrepos = ctx.repo.state(options.remote)
-        paths = subrepos.keys()
+        paths = list(subrepos.keys())
         selabspaths = None
         if ctx.level == 0 and hasattr(options, 'paths') and options.paths:
-            selabspaths = [ os.path.abspath(p) for p in options.paths ]
+            selabspaths = [ os.path.abspath(compat.decode_sysarg(p)) for p in options.paths ]
         log('level %s selected paths %s', ctx.level, selabspaths)
         for p in paths:
             # prep context
@@ -662,17 +720,17 @@ class SubRepoCommand(SubCommand):
             if not ctx.subrepo:
                 ctx.subrepo = self.git_hg_repo_try(ctx.subpath)
             # prep recursion (only into git-hg subrepos)
-            if ctx.subrepo and options.recursive and ctx.state[2] == 'hg':
+            if ctx.subrepo and options.recursive and ctx.state[2] == b'hg':
                 newctx = self.subcontext(ctx.subrepo)
                 newctx.level = ctx.level + 1
                 self.do_operation(options, args, newctx)
 
     def get_git_commit(self, ctx):
         src, rev, kind = ctx.state
-        if kind == 'hg':
+        if kind == b'hg':
             gitcommit = ctx.subrepo.get_git_commit(rev)
             if not gitcommit:
-                die('could not determine git commit for %s; a fetch may update notes' % rev)
+                die(b'could not determine git commit for %s; a fetch may update notes' % rev)
         else:
             gitcommit = rev
         return gitcommit
@@ -681,28 +739,28 @@ class SubRepoCommand(SubCommand):
         if not ctx.subrepo:
             return
         src, orig, kind = ctx.state
-        gitcommit = ctx.subrepo.rev_parse('HEAD')
+        gitcommit = ctx.subrepo.rev_parse(b'HEAD')
         if not gitcommit:
-            die('could not determine current HEAD state in %s' % ctx.subrepo.topdir)
+            die(b'could not determine current HEAD state in %s' % ctx.subrepo.topdir)
         rev = gitcommit
-        if kind == 'hg':
+        if kind == b'hg':
             rev = ctx.subrepo.get_hg_rev(gitcommit)
             if not rev:
-                die('could not determine hg changeset for commit %s' % gitcommit)
+                die(b'could not determine hg changeset for commit %s' % gitcommit)
         else:
             rev = gitcommit
         # obtain state from index
-        state_path = os.path.join(ctx.repo.topdir, '.hgsubstate')
+        state_path = os.path.join(ctx.repo.topdir, b'.hgsubstate')
         # should have this, since we have subrepo (state) in the first place ...
         if not os.path.exists(state_path):
-            die('no .hgsubstate found in repo %s' % ctx.repo.topdir)
+            die(b'no .hgsubstate found in repo %s' % ctx.repo.topdir)
         if orig != rev:
             short = ctx.subrepo.rev_parse(['--short', gitcommit])
-            print "Updating %s to %s [git %s]" % (ctx.subpath, rev, short)
+            puts(b"Updating %s to %s [git %s]" % (ctx.subpath, rev, short))
             # replace and update index
-            with open(state_path, 'r') as f:
+            with open(state_path, 'rb') as f:
                 state = f.read()
-            state = re.sub('.{40} %s' % (ctx.relpath), '%s %s' % (rev, ctx.relpath), state)
+            state = re.sub(b'.{40} %s' % (ctx.relpath), b'%s %s' % (rev, ctx.relpath), state)
             with open(state_path, 'wb') as f:
                 f.write(state)
 
@@ -710,7 +768,7 @@ class SubRepoCommand(SubCommand):
         if not ctx.subrepo:
             return
         if not options.quiet:
-            print 'Entering %s' % ctx.subpath
+            puts(b'Entering %s' % ctx.subpath)
             sys.stdout.flush()
         newenv = os.environ.copy()
         newenv['path'] = ctx.relpath
@@ -721,7 +779,7 @@ class SubRepoCommand(SubCommand):
         proc = subprocess.Popen(options.command, shell=True, cwd=ctx.subpath, env=newenv)
         proc.wait()
         if proc.returncode != 0:
-            die('stopping at %s; script returned non-zero status' % ctx.subpath)
+            die(b'stopping at %s; script returned non-zero status' % ctx.subpath)
 
     def cmd_update(self, options, args, ctx):
         if not ctx.subrepo:
@@ -729,7 +787,7 @@ class SubRepoCommand(SubCommand):
             self.run_cmd(options, ctx.repo, ['clone', src, ctx.subpath], cwd=None)
             ctx.subrepo = self.git_hg_repo_try(ctx.subpath)
             if not ctx.subrepo:
-                die('subrepo %s setup clone failed', ctx.subpath)
+                die(b'subrepo %s setup clone failed' % ctx.subpath)
             # force (detached) checkout of target commit following clone
             cmd = [ 'checkout', '-q' ]
         else:
@@ -757,32 +815,32 @@ class SubRepoCommand(SubCommand):
 
     def cmd_status(self, options, args, ctx):
         if not ctx.subrepo:
-            state = '-'
-            revname = ''
+            state = b'-'
+            revname = b''
             _, gitcommit, kind = ctx.state
-            if kind != 'git':
-                gitcommit += '[hg] '
+            if kind != b'git':
+                gitcommit += b'[hg] '
         else:
             gitcommit = self.get_git_commit(ctx)
-            head = ctx.subrepo.rev_parse('HEAD')
+            head = ctx.subrepo.rev_parse(b'HEAD')
             if head == gitcommit:
-                state = ' '
+                state = b' '
             else:
-                state = '+'
+                state = b'+'
                 # option determines what to print
                 if not options.cached:
                     gitcommit = head
             revname = ctx.subrepo.rev_describe(gitcommit)
             if revname:
-                revname = ' (%s)' % revname
-        print "%s%s %s%s" % (state, gitcommit, ctx.subpath, revname)
+                revname = b' (%s)' % revname
+        puts(b"%s%s %s%s" % (state, gitcommit, ctx.subpath, revname))
 
     def cmd_sync(self, options, args, ctx):
         if not ctx.subrepo:
             return
         src, _, _ = ctx.state
         self.run_cmd(options, ctx.subrepo, \
-            ['config', 'remote.%s.url' % (options.remote), src])
+            ['config', b'remote.%s.url' % (options.remote), src])
 
 
 class RepoCommand(SubCommand):
@@ -801,7 +859,7 @@ class RepoCommand(SubCommand):
         (remote, args) = self.get_remote(args)
         repos = self.githgrepo.get_hg_repos()
         if remote in repos:
-            print repos[remote].rstrip('/')
+            puts(repos[remote].rstrip(b'/'))
 
 
 class HgCommand(SubCommand):
@@ -821,8 +879,8 @@ class HgCommand(SubCommand):
         remote = self.subcommand
         repos = self.githgrepo.get_hg_repos()
         if len(args) and remote in repos:
-            if args[0].find('hg') < 0:
-                args.insert(0, 'hg')
+            if args[0].find(b'hg') < 0:
+                args.insert(0, b'hg')
             args[1:1] = ['-R', repos[remote]]
             p = subprocess.Popen(args, stdout=None)
             p.wait()
@@ -847,12 +905,12 @@ class HelpCommand(SubCommand):
 
 def get_subcommands():
     commands = {
-        'hg-rev': HgRevCommand,
-        'git-rev': GitRevCommand,
-        'repo': RepoCommand,
-        'gc':  GcCommand,
-        'sub': SubRepoCommand,
-        'help' : HelpCommand
+        b'hg-rev': HgRevCommand,
+        b'git-rev': GitRevCommand,
+        b'repo': RepoCommand,
+        b'gc':  GcCommand,
+        b'sub': SubRepoCommand,
+        b'help' : HelpCommand
     }
     # add remote named subcommands
     repos = githgrepo.get_hg_repos()
@@ -885,11 +943,12 @@ def do_usage():
 
     Available hg remotes:
     """)
+    usage = compat.to_b(usage)
     for r in githgrepo.get_hg_repos():
-        usage += '\t%s\n' % (r)
-    usage += '\n'
-    sys.stderr.write(usage)
-    sys.stderr.flush()
+        usage += b'\t%s\n' % (r)
+    usage += b'\n'
+    compat.stderr.write(usage)
+    compat.stderr.flush()
     sys.exit(2)
 
 def init_git(gitdir=None):
@@ -897,7 +956,7 @@ def init_git(gitdir=None):
 
     try:
         githgrepo = GitHgRepo(gitdir=gitdir)
-    except Exception, e:
+    except Exception as e:
         die(str(e))
 
 def init_logger():
@@ -916,8 +975,8 @@ def init_version():
     global hg_version
 
     try:
-        version, _, extra = util.version().partition('+')
-        version = list(int(e) for e in version.split('.'))
+        version, _, extra = util.version().partition(b'+')
+        version = list(int(e) for e in version.split(b'.'))
         if extra:
             version[-1] += 1
         hg_version = tuple(version)
@@ -933,19 +992,21 @@ def main(argv):
     global subcommands
 
     # as an alias, cwd is top dir, change again to original directory
-    reldir = os.environ.get('GIT_PREFIX')
+    reldir = compat.getenv(b'GIT_PREFIX', None)
     if reldir:
         os.chdir(reldir)
 
     # init repo dir
     # we will take over dir management ...
-    init_git(os.environ.pop('GIT_DIR', None))
+    gitdir = compat.getenv(b'GIT_DIR', None)
+    os.environ.pop('GIT_DIR', None)
+    init_git(gitdir)
 
     subcommands = get_subcommands()
 
     cmd = ''
     if len(argv) > 1:
-        cmd = argv[1]
+        cmd = compat.decode_sysarg(argv[1])
     argv = argv[2:]
     if cmd in subcommands:
         c = subcommands[cmd]
