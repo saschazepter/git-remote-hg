@@ -534,6 +534,7 @@ def revwalk(repo, name, b):
         pending.add(b.rev())
     interval = b.rev() / 10
     interval = interval if interval > 1000 else 1000
+    pfunc = repo.changelog.parentrevs
     for cur in xrange(b.rev(), -1, -1):
         if not pending:
             break
@@ -541,7 +542,7 @@ def revwalk(repo, name, b):
         if cur in pending:
             positive.append(cur)
             pending.remove(cur)
-            parents = [p for p in repo.changelog.parentrevs(cur) if p >= 0]
+            parents = [p for p in pfunc(cur) if p >= 0]
             for p in parents:
                 if not marks.is_marked(repo[p].hex()):
                     pending.add(p)
