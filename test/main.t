@@ -755,7 +755,6 @@ test_expect_success 'remote big push non fast forward' '
 		# so it will already have pushed some above previously
 		# (and master is a fake one that jumps around a bit)
 		check_push 1 --all <<-\EOF
-		master:non-fast-forward
 		bad_bmark:non-fast-forward
 		branches/bad_branch:non-fast-forward
 		EOF
