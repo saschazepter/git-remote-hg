@@ -521,8 +521,8 @@ test_expect_success 'subcommand sub status' '
 
 	(
 	cd gitrepo &&
-	git-hg-helper sub update sub_hg_a --force &&
-	git-hg-helper sub update sub_git --force &&
+	git-hg-helper sub update --force sub_hg_a  &&
+	git-hg-helper sub update --force sub_git &&
 		(
 		# advance and add a tag to the git repo
 		cd sub_git &&
