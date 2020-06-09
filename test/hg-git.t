@@ -114,6 +114,7 @@ setup () {
 	git config --global receive.denycurrentbranch warn
 	git config --global remote-hg.hg-git-compat true
 	git config --global remote-hg.track-branches false
+	git config --global remote-hg.shared-marks false
 
 	HGEDITOR=true
 	HGMERGE=true
