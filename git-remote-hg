@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import atexit
 import hashlib
+import io
 import time as ptime
 
 # python 2/3 compatibility approach:
@@ -1209,6 +1210,8 @@ def write_tag(repo, tag, node, msg, author):
             data = fctx.data()
         except error.LookupError:
             data = b""
+        if data and not data.endswith(b'\n'):
+            data += b'\n'
         content = data + b"%s %s\n" % (node, tag)
         return make_memfilectx(repo, memctx, f, content, False, False, None)
 
@@ -1466,13 +1469,19 @@ def do_push_hg(parser):
                 tagnode, branch = write_tag(parser.repo, tag, node, msg, author)
                 p_revs[tagnode] = b'refs/heads/branches/' + gitref(branch)
             else:
-                if hasattr(parser.repo, 'opener'):
-                    fp = parser.repo.opener(b'localtags', b'a')
+                vfs = parser.repo.vfs if hasattr(parser.repo, 'vfs') \
+                    else parser.repo.opener
+                prevtags = b''
+                try:
+                    fp = vfs(b'localtags', b'r+')
+                except IOError:
+                    fp = vfs(b'localtags', b'a')
                 else:
-                  try:
-                      fp = parser.repo.vfs(b'localtags', b'r+')
-                  except IOError:
-                      fp = parser.repo.vfs(b'localtags', b'a')
+                    prevtags = fp.read()
+                # ensure at end
+                fp.seek(0, io.SEEK_END)
+                if prevtags and not prevtags.endswith(b'\n'):
+                    fp.write(b'\n')
                 fp.write(b'%s %s\n' % (node, tag))
                 fp.close()
             p_revs[bnode] = ref
