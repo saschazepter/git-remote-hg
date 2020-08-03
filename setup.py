@@ -25,6 +25,8 @@ CLASSIFIERS = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 2",
     "Programming Language :: Python :: 2.7",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
     "License :: OSI Approved",
     "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
     "Development Status :: 5 - Production/Stable",
