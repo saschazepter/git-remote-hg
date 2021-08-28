@@ -193,7 +193,9 @@ def gitref(ref):
     # standard url percentage encoding with a (legacy) twist:
     # ' ' -> '___'
     # '___' also percentage encoded
-    return compat.urlquote(ref).replace(b'___', b'%5F%5F%5F').replace(b'%20', b'___')
+    # python 3.6 considers ~ reserved, whereas python 3.7 no longer
+    return compat.urlquote(ref).replace(b'___', b'%5F%5F%5F'). \
+        replace(b'%20', b'___').replace(b'~', b'%7E')
 
 def check_version(*check):
     if not hg_version:
