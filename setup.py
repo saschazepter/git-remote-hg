@@ -3,7 +3,7 @@
 import setuptools
 
 # strip leading v
-version = 'v1.0.2.1'[1:]
+version = 'v1.0.3'[1:]
 
 # check for released version
 assert (len(version) > 0)
