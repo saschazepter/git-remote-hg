@@ -56,7 +56,13 @@ if sys.version_info[0] == 3:
         stdout = sys.stdout.buffer
         stderr = sys.stderr.buffer
         getcwd = os.getcwdb
-        getenv = os.getenvb if os.supports_bytes_environ else os.getenv
+        @staticmethod
+        def getenvb(val, default):
+            result = os.getenv(val.decode(), default.decode() if hasattr(default, 'decode') else default)
+             # if result is a string, get bytes instead
+            result = result.encode() if hasattr(result, 'encode') else result
+            return result
+        getenv = os.getenvb if os.supports_bytes_environ else getenvb
 else:
     class compat(basecompat):
         # life was simple in those days ...
