@@ -65,3 +65,4 @@ export GIT_COMMITTER_EMAIL GIT_COMMITTER_NAME
 # maintain backwards compatible default
 # (as used in remote helper)
 git config --global init.defaultBranch master
+git config --global protocol.file.allow always
