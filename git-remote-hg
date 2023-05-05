@@ -17,7 +17,7 @@ from __future__ import print_function
 from mercurial import hg, ui, bookmarks, context, encoding
 from mercurial import node, error, extensions, discovery, util
 from mercurial import changegroup
-from mercurial import exchange
+from mercurial import exchange, bundle2
 
 import re
 import sys
@@ -1073,14 +1073,18 @@ def push(repo, remote, parsed_refs, p_revs):
         # Nothing to push
         return True
 
-    if check_version(4, 4):
-        cg = changegroup.makechangegroup(repo, outgoing, b'01', b'push')
-    else:
-        cg = changegroup.getchangegroup(repo, b'push', outgoing)
+    bundler = bundle2.bundle20(repo.ui, bundle2.bundle2caps(remote))
 
-    if force:
-        remoteheads = [b'force']
-    return remote.unbundle(cg, remoteheads, b'push')
+    bundler.newpart(b'replycaps', data=bundle2.encodecaps({}))
+
+    cgbundler = changegroup.getbundler(b'01', repo)
+    cgstream = cgbundler.generate(outgoing.common, outgoing.missing, False, b'push')
+    bundler.newpart(b'changegroup', data=cgstream)
+
+    stream = util.chunkbuffer(bundler.getchunks())
+    reply = remote.unbundle(stream, [b'force'], remote.url())
+    op = bundle2.processbundle(repo, reply)
+    return op.records.getreplies(1)[b'changegroup'][0][b'return']
 
 def check_tip(ref, kind, name, heads):
     try:
