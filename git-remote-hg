@@ -723,6 +723,10 @@ def export_ref(repo, name, kind, head):
             for key, value in compat.iteritems(extra):
                 if key in (b'author', b'committer', b'encoding', b'message', b'branch', b'hg-git'):
                     continue
+                elif key == b'hg-git-rename-source' and value == b'git':
+                    # extra data that hg-git might put there unconditionally
+                    # or that we put in there to be compatible
+                    continue
                 else:
                     extra_msg += b"extra : %s : %s\n" % (key, compat.urlquote(value))
 
@@ -1141,6 +1145,10 @@ def parse_commit(parser):
         extra[b'branch'] = hgref(branch)
 
     if mode == 'hg':
+        # add some extra that hg-git adds (almost) unconditionally
+        # see also https://foss.heptapod.net/mercurial/hg-git/-/merge_requests/211
+        # NOTE it could be changed to another value below
+        extra[b'hg-git-rename-source'] = b'git'
         i = data.find(b'\n--HG--\n')
         if i >= 0:
             tmp = data[i + len(b'\n--HG--\n'):].strip()
