@@ -151,7 +151,7 @@ NAME_RE = re.compile(b'^([^<>]+)')
 AUTHOR_RE = re.compile(b'^([^<>]+?)? ?[<>]([^<>]*)(?:$|>)')
 EMAIL_RE = re.compile(br'([^ \t<>]+@[^ \t<>]+)')
 AUTHOR_HG_RE = re.compile(b'^(.*?) ?<(.*?)(?:>(.*))?$')
-RAW_AUTHOR_RE = re.compile(b'^(\w+) (?:(.+)? )?<(.*)> (\d+) ([+-]\d+)')
+RAW_AUTHOR_RE = re.compile(br'^(\w+) (?:(.+)? )?<(.*)> (\d+) ([+-]\d+)')
 
 VERSION = 2
 
@@ -389,7 +389,7 @@ class Parser:
             return None
         _, name, email, date, tz = m.groups()
         if name and b'ext:' in name:
-            m = re.match(b'^(.+?) ext:\((.+)\)$', name)
+            m = re.match(br'^(.+?) ext:\((.+)\)$', name)
             if m:
                 name = m.group(1)
                 ex = compat.urlunquote(m.group(2))
