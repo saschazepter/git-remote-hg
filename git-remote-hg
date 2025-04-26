@@ -159,6 +159,9 @@ def die(msg):
     compat.stderr.write(b'ERROR: %s\n' % compat.to_b(msg, 'utf-8'))
     sys.exit(1)
 
+def debug(*args):
+    compat.stderr.write(b'DEBUG: %s\n' % compat.to_b(repr(args)))
+
 def warn(msg):
     compat.stderr.write(b'WARNING: %s\n' % compat.to_b(msg, 'utf-8'))
     compat.stderr.flush()
