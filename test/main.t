@@ -8,8 +8,7 @@
 
 test_description='Test remote-hg'
 
-test -n "$TEST_DIRECTORY" || TEST_DIRECTORY=$(dirname $0)/
-. "$TEST_DIRECTORY"/test-lib.sh
+. ./test-lib.sh
 
 if test "$CAPABILITY_PUSH" = "t"
 then

@@ -1,8 +1,10 @@
 #!/bin/sh
 
+: "${SHARNESS_TEST_SRCDIR:=$(cd "$(dirname "${BASH_SOURCE-$0}")" && pwd)}"
+
 if [ -z "$SHARNESS" ] ; then
 	for d in \
-		"." \
+		"$SHARNESS_TEST_SRCDIR" \
 		"$HOME/share/sharness" \
 		"/usr/local/share/sharness" \
 		"/usr/share/sharness"

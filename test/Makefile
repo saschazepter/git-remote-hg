@@ -1,9 +1,9 @@
 RM ?= rm -f
 
 T = main.t main-push.t bidi.t helper.t
-TEST_DIRECTORY := $(CURDIR)
+SHARNESS_TEST_DIRECTORY := $(CURDIR)
 
-export TEST_DIRECTORY
+export SHARNESS_TEST_DIRECTORY
 
 all: test
 
