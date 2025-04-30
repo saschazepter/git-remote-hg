@@ -19,12 +19,6 @@ else
 	git config --global remote-hg.capability-push false
 fi
 
-if ! test_have_prereq PYTHON
-then
-	skip_all='skipping remote-hg tests; python with mercurial not available'
-	test_done
-fi
-
 check () {
 	echo $3 > expected &&
 	git --git-dir=$1/.git log --format='%s' -1 $2 > actual &&
