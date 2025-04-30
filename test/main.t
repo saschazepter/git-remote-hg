@@ -506,7 +506,7 @@ else
 test_expect_failure "$testcopyrenamedesc" "$testcopyrename"
 fi
 
-test_expect_success 'fetch special filenames' '
+test_expect_success !WIN 'fetch special filenames' '
 	test_when_finished "rm -rf hgrepo gitrepo && LC_ALL=C" &&
 
 	LC_ALL=en_US.UTF-8
