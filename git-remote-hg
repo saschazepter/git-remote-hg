@@ -411,16 +411,13 @@ class Parser:
         return (user, int(date), hgtz(tz))
 
 def fix_file_path(path):
-    def posix_path(path):
-        if os.sep == '/':
-            return path
-        # even Git for Windows expects forward
-        return path.replace(compat.to_b(os.sep), b'/')
-    # also converts forward slash to backwards slash on Win
     path = os.path.normpath(path)
-    if not os.path.isabs(path):
-        return posix_path(path)
-    return posix_path(os.path.relpath(path, b'/'))
+    if os.path.isabs(path):
+        path = os.path.relpath(path, b'/')
+    if os.sep == '/':
+        return path
+    # even Git for Windows expects forward
+    return path.replace(compat.to_b(os.sep), b'/')
 
 def export_files(files):
     final = []
@@ -1757,8 +1754,7 @@ def fix_path(alias, repo, orig_url):
     url = compat.urlparse(orig_url, b'file')
     if url.scheme != b'file' or os.path.isabs(os.path.expanduser(url.path)):
         return
-    abs_url = compat.urljoin(b"%s/" % compat.getcwd(), orig_url)
-    cmd = ['git', 'config', b'remote.%s.url' % alias, b"hg::%s" % abs_url]
+    cmd = ['git', 'config', b'remote.%s.url' % alias, b"hg::%s" % os.path.abspath(orig_url)]
     subprocess.call(cmd)
 
 def select_private_refs(alias):
