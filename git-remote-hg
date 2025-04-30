@@ -424,6 +424,10 @@ def export_files(files):
     return final
 
 def get_filechanges(repo, ctx, parent):
+    if hasattr(parent, 'status'):
+        stat = parent.status(ctx)
+        return stat.modified + stat.added, stat.removed
+
     modified = set()
     added = set()
     removed = set()
