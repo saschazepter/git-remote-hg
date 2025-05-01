@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright (c) 2012 Felipe Contreras
 #
@@ -8,8 +8,7 @@
 
 test_description='Test remote-hg'
 
-test -n "$TEST_DIRECTORY" || TEST_DIRECTORY=$(dirname $0)/
-. "$TEST_DIRECTORY"/test-lib.sh
+. ./test-lib.sh
 
 if test "$CAPABILITY_PUSH" = "t"
 then
@@ -18,12 +17,6 @@ then
 	git config --global remote-hg.fast-export-options '-C -C -M'
 else
 	git config --global remote-hg.capability-push false
-fi
-
-if ! test_have_prereq PYTHON
-then
-	skip_all='skipping remote-hg tests; python with mercurial not available'
-	test_done
 fi
 
 check () {
@@ -513,7 +506,7 @@ else
 test_expect_failure "$testcopyrenamedesc" "$testcopyrename"
 fi
 
-test_expect_success 'fetch special filenames' '
+test_expect_success !WIN 'fetch special filenames' '
 	test_when_finished "rm -rf hgrepo gitrepo && LC_ALL=C" &&
 
 	LC_ALL=en_US.UTF-8
@@ -652,16 +645,27 @@ test_expect_success 'remote big push' '
 	(
 	cd gitrepo &&
 
-	check_push 1 --all <<-\EOF
-	master
-	good_bmark
-	branches/good_branch
-	new_bmark:new
-	branches/new_branch:new
-	bad_bmark1:non-fast-forward
-	bad_bmark2:non-fast-forward
-	branches/bad_branch:non-fast-forward
-	EOF
+	if test "$CAPABILITY_PUSH" = "t"
+	then
+		# cap push handles refs one by one
+		# so it will still correctly report several ok
+		check_push 1 --all <<-\EOF
+		master
+		good_bmark
+		branches/good_branch
+		new_bmark:new
+		branches/new_branch:new
+		bad_bmark1:non-fast-forward
+		bad_bmark2:non-fast-forward
+		branches/bad_branch:non-fast-forward
+		EOF
+	else
+		check_push 1 --all <<-\EOF
+		bad_bmark1:non-fast-forward
+		bad_bmark2:non-fast-forward
+		branches/bad_branch:non-fast-forward
+		EOF
+	fi
 	) &&
 
 	if test "$CAPABILITY_PUSH" = "t"
@@ -675,7 +679,8 @@ test_expect_success 'remote big push' '
 		check_bookmark hgrepo good_bmark three &&
 		check_bookmark hgrepo bad_bmark1 one &&
 		check_bookmark hgrepo bad_bmark2 one &&
-		check_bookmark hgrepo new_bmark six
+		check_bookmark hgrepo new_bmark six &&
+		check gitrepo origin/master two
 	else
 		check_branch hgrepo default one &&
 		check_branch hgrepo good_branch "good branch" &&
@@ -684,7 +689,8 @@ test_expect_success 'remote big push' '
 		check_bookmark hgrepo good_bmark one &&
 		check_bookmark hgrepo bad_bmark1 one &&
 		check_bookmark hgrepo bad_bmark2 one &&
-		check_bookmark hgrepo new_bmark
+		check_bookmark hgrepo new_bmark &&
+		check gitrepo origin/master one
 	fi
 '
 
@@ -734,12 +740,21 @@ test_expect_success 'remote big push non fast forward' '
 	echo five > content &&
 	git commit -q -a -m five &&
 
-	check_push 1 --all <<-\EOF &&
-	master
-	good_bmark
-	bad_bmark:non-fast-forward
-	branches/bad_branch:non-fast-forward
-	EOF
+	if test "$CAPABILITY_PUSH" = "t"
+	then
+		check_push 1 --all <<-\EOF
+		master
+		good_bmark
+		bad_bmark:non-fast-forward
+		branches/bad_branch:non-fast-forward
+		EOF
+	else
+		# cap export now only report error cases
+		check_push 1 --all <<-\EOF
+		bad_bmark:non-fast-forward
+		branches/bad_branch:non-fast-forward
+		EOF
+	fi &&
 
 	git fetch &&
 
@@ -753,9 +768,8 @@ test_expect_success 'remote big push non fast forward' '
 		branches/bad_branch:non-fast-forward
 		EOF
 	else
+		# cap export now only report error cases
 		check_push 1 --all <<-\EOF
-		master
-		good_bmark
 		bad_bmark:non-fast-forward
 		branches/bad_branch:non-fast-forward
 		EOF
@@ -797,6 +811,7 @@ test_expect_success 'remote big push force' '
 	fi
 	) &&
 
+	check gitrepo origin/master two &&
 	check_branch hgrepo good_branch eight &&
 	check_branch hgrepo bad_branch nine &&
 	check_branch hgrepo new_branch ten &&
@@ -814,16 +829,27 @@ test_expect_success 'remote big push dry-run' '
 	(
 	cd gitrepo &&
 
-	check_push 1 --dry-run --all <<-\EOF &&
-	master
-	good_bmark
-	branches/good_branch
-	new_bmark:new
-	branches/new_branch:new
-	bad_bmark1:non-fast-forward
-	bad_bmark2:non-fast-forward
-	branches/bad_branch:non-fast-forward
-	EOF
+	if test "$CAPABILITY_PUSH" = "t"
+	then
+		# cap push handles refs one by one
+		# so it will still correctly report several ok
+		check_push 1 --dry-run --all <<-\EOF
+		master
+		good_bmark
+		branches/good_branch
+		new_bmark:new
+		branches/new_branch:new
+		bad_bmark1:non-fast-forward
+		bad_bmark2:non-fast-forward
+		branches/bad_branch:non-fast-forward
+		EOF
+	else
+		check_push 1 --dry-run --all <<-\EOF
+		bad_bmark1:non-fast-forward
+		bad_bmark2:non-fast-forward
+		branches/bad_branch:non-fast-forward
+		EOF
+	fi &&
 
 	check_push 0 --dry-run master good_bmark new_bmark branches/good_branch branches/new_branch <<-\EOF
 	master
@@ -834,6 +860,7 @@ test_expect_success 'remote big push dry-run' '
 	EOF
 	) &&
 
+	check gitrepo origin/master one &&
 	check_branch hgrepo default one &&
 	check_branch hgrepo good_branch "good branch" &&
 	check_branch hgrepo bad_branch "bad branch" &&
@@ -878,6 +905,7 @@ test_expect_success 'remote big push force dry-run' '
 	fi
 	) &&
 
+	check gitrepo origin/master one &&
 	check_branch hgrepo default one &&
 	check_branch hgrepo good_branch "good branch" &&
 	check_branch hgrepo bad_branch "bad branch" &&

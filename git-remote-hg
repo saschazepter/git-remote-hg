@@ -147,10 +147,10 @@ else:
 # Commits are modified to preserve hg information and allow bidirectionality.
 #
 
-NAME_RE = re.compile(b'^([^<>]+)')
-AUTHOR_RE = re.compile(b'^([^<>]+?)? ?[<>]([^<>]*)(?:$|>)')
+NAME_RE = re.compile(br'^([^<>]+)')
+AUTHOR_RE = re.compile(br'^([^<>]+?)? ?[<>]([^<>]*)(?:$|>)')
 EMAIL_RE = re.compile(br'([^ \t<>]+@[^ \t<>]+)')
-AUTHOR_HG_RE = re.compile(b'^(.*?) ?<(.*?)(?:>(.*))?$')
+AUTHOR_HG_RE = re.compile(br'^(.*?) ?<(.*?)(?:>(.*))?$')
 RAW_AUTHOR_RE = re.compile(br'^(\w+) (?:(.+)? )?<(.*)> (\d+) ([+-]\d+)')
 
 VERSION = 2
@@ -158,6 +158,9 @@ VERSION = 2
 def die(msg):
     compat.stderr.write(b'ERROR: %s\n' % compat.to_b(msg, 'utf-8'))
     sys.exit(1)
+
+def debug(*args):
+    compat.stderr.write(b'DEBUG: %s\n' % compat.to_b(repr(args)))
 
 def warn(msg):
     compat.stderr.write(b'WARNING: %s\n' % compat.to_b(msg, 'utf-8'))
@@ -237,27 +240,17 @@ def get_rev_hg(commit):
 
 class Marks:
 
-    def __init__(self, path, repo):
+    def __init__(self, path, _repo=None):
         self.path = path
-        self.repo = repo
         self.clear()
         self.load()
-
-        if self.version < VERSION:
-            if self.version == 1:
-                self.upgrade_one()
-
-            # upgraded?
-            if self.version < VERSION:
-                self.clear()
-                self.version = VERSION
 
     def clear(self):
         self.tips = {}
         self.marks = {}
         self.rev_marks = {}
         self.last_mark = 0
-        self.version = 0
+        self.version = VERSION
         self.last_note = 0
 
     def load(self):
@@ -273,19 +266,11 @@ class Marks:
         self.tips = []
         self.marks = marks
         self.last_mark = tmp['last-mark']
-        self.version = tmp.get('version', 1)
+        self.version = tmp['version']
         self.last_note = 0
 
         for rev, mark in compat.iteritems(self.marks):
             self.rev_marks[mark] = rev
-
-    def upgrade_one(self):
-        def get_id(rev):
-            return hghex(self.repo.changelog.node(int(rev)))
-        self.tips = dict((name, get_id(rev)) for name, rev in compat.iteritems(self.tips))
-        self.marks = dict((get_id(rev), mark) for rev, mark in compat.iteritems(self.marks))
-        self.rev_marks = dict((mark, get_id(rev)) for mark, rev in compat.iteritems(self.rev_marks))
-        self.version = 2
 
     def dict(self):
         return { 'tips': self.tips, 'marks': self.marks,
@@ -408,40 +393,38 @@ class Parser:
         return (user, int(date), hgtz(tz))
 
 def fix_file_path(path):
-    def posix_path(path):
-        if os.sep == '/':
-            return path
-        # even Git for Windows expects forward
-        return path.replace(compat.to_b(os.sep), b'/')
-    # also converts forward slash to backwards slash on Win
     path = os.path.normpath(path)
-    if not os.path.isabs(path):
-        return posix_path(path)
-    return posix_path(os.path.relpath(path, b'/'))
+    if os.path.isabs(path):
+        path = os.path.relpath(path, b'/')
+    if os.sep == '/':
+        return path
+    # even Git for Windows expects forward
+    return path.replace(compat.to_b(os.sep), b'/')
 
-def export_files(files):
-    final = []
-    for f in files:
-        fid = node.hex(f.filenode())
+def export_file(ctx, fname):
+    f = ctx.filectx(fname)
+    fid = node.hex(f.filenode())
 
-        if fid in filenodes:
-            mark = filenodes[fid]
-        else:
-            mark = marks.next_mark()
-            filenodes[fid] = mark
-            d = f.data()
+    if fid in filenodes:
+        mark = filenodes[fid]
+    else:
+        mark = marks.next_mark()
+        filenodes[fid] = mark
+        d = f.data()
 
-            puts(b"blob")
-            puts(b"mark :%u" % mark)
-            puts(b"data %d" % len(d))
-            puts(d)
+        puts(b"blob")
+        puts(b"mark :%u" % mark)
+        puts(b"data %d" % len(d))
+        puts(f.data())
 
-        path = fix_file_path(f.path())
-        final.append((gitmode(f.flags()), mark, path))
-
-    return final
+    path = fix_file_path(f.path())
+    return (gitmode(f.flags()), mark, path)
 
 def get_filechanges(repo, ctx, parent):
+    if hasattr(parent, 'status'):
+        stat = parent.status(ctx)
+        return stat.modified + stat.added, stat.removed
+
     modified = set()
     added = set()
     removed = set()
@@ -483,7 +466,7 @@ def fixup_user_git(user):
 def fixup_user_hg(user):
     def sanitize(name):
         # stole this from hg-git
-        return re.sub(b'[<>\n]', b'?', name.lstrip(b'< ').rstrip(b'> '))
+        return re.sub(br'[<>\n]', b'?', name.lstrip(b'< ').rstrip(b'> '))
 
     m = AUTHOR_HG_RE.match(user)
     if m:
@@ -585,18 +568,6 @@ def get_repo(url, alias):
     else:
         shared_path = os.path.join(gitdir, b'hg')
 
-        # check and upgrade old organization
-        hg_path = os.path.join(shared_path, b'.hg')
-        if os.path.exists(shared_path) and not os.path.exists(hg_path):
-            repos = os.listdir(shared_path)
-            for x in repos:
-                local_hg = os.path.join(shared_path, x, b'clone', b'.hg')
-                if not os.path.exists(local_hg):
-                    continue
-                if not os.path.exists(hg_path):
-                    shutil.move(local_hg, hg_path)
-                shutil.rmtree(os.path.join(shared_path, x, b'clone'))
-
         # setup shared repo (if not there)
         try:
             hg.peer(myui, {}, shared_path, create=True)
@@ -607,11 +578,16 @@ def get_repo(url, alias):
             os.makedirs(dirname)
 
         local_path = os.path.join(dirname, b'clone')
-        if not os.path.exists(local_path):
-            hg.share(myui, shared_path, local_path, update=False)
+        if check_version(4, 2):
+            if not os.path.exists(local_path):
+                hg.share(myui, shared_path, local_path, update=False, relative=True)
         else:
-            # make sure the shared path is always up-to-date
-            util.writefile(os.path.join(local_path, b'.hg', b'sharedpath'), hg_path)
+            if not os.path.exists(local_path):
+                hg.share(myui, shared_path, local_path, update=False)
+            else:
+                # make sure the shared path is always up-to-date
+                hg_path = os.path.join(shared_path, b'.hg')
+                util.writefile(os.path.join(local_path, b'.hg', b'sharedpath'), hg_path)
 
         repo = hg.repository(myui, local_path)
         try:
@@ -721,7 +697,7 @@ def export_ref(repo, name, kind, head):
                 extra_msg += b"rename : %s => %s\n" % e
 
             for key, value in compat.iteritems(extra):
-                if key in (b'author', b'committer', b'encoding', b'message', b'branch', b'hg-git'):
+                if key in (b'author', b'committer', b'encoding', b'message', b'branch', b'hg-git', b'transplant_source'):
                     continue
                 elif key == b'hg-git-rename-source' and value == b'git':
                     # extra data that hg-git might put there unconditionally
@@ -736,7 +712,7 @@ def export_ref(repo, name, kind, head):
         if len(parents) == 0:
             puts(b'reset %s/%s' % (prefix, ename))
 
-        modified_final = export_files(c.filectx(f) for f in modified)
+        modified_final = [export_file(c, fname) for fname in modified]
 
         puts(b"commit %s/%s" % (prefix, ename))
         puts(b"mark :%d" % (marks.get_mark(c.hex())))
@@ -849,8 +825,11 @@ def do_list(parser, branchmap):
 
     for branch, heads in compat.iteritems(branchmap):
         # only open heads
-        heads = [h for h in heads if b'close' not in repo.changelog.read(h)[5]]
-        if heads:
+        try:
+            heads = [h for h in heads if b'close' not in repo.changelog.read(h)[5]]
+            if heads:
+                branches[branch] = heads
+        except error.LookupError:
             branches[branch] = heads
 
     list_head(repo, cur)
@@ -1340,7 +1319,10 @@ def checkheads(repo, remote, p_revs, force):
 def push_unsafe(repo, remote, p_revs, force):
 
     fci = discovery.findcommonincoming
-    commoninc = fci(repo, remote, force=force)
+    if check_version(4, 5):
+        commoninc = fci(repo, remote, force=force, ancestorsof=list(p_revs))
+    else:
+        commoninc = fci(repo, remote, force=force)
     common, _, remoteheads = commoninc
     fco = discovery.findcommonoutgoing
     outgoing = fco(repo, remote, onlyheads=list(p_revs), commoninc=commoninc, force=force)
@@ -1370,12 +1352,6 @@ def push_unsafe(repo, remote, p_revs, force):
         ret = remote.unbundle(cg, remoteheads, b'push')
     else:
         ret = remote.addchangegroup(cg, b'push', repo.url())
-
-    phases = remote.listkeys(b'phases')
-    if phases:
-        for head in p_revs:
-            # update to public
-            remote.pushkey(b'phases', hghex(head), b'1', b'0')
 
     return ret
 
@@ -1411,6 +1387,7 @@ def do_push_hg(parser):
     global parsed_refs, parsed_tags
     p_bmarks = []
     p_revs = {}
+    ok_refs = []
 
     parsed_refs = {}
     parsed_tags = {}
@@ -1457,7 +1434,7 @@ def do_push_hg(parser):
                 continue
 
             p_revs[bnode] = ref
-            puts(b"ok %s" % ref)
+            ok_refs.append(ref)
         elif ref.startswith(b'refs/heads/'):
             bmark = ref[len(b'refs/heads/'):]
             new = node
@@ -1467,14 +1444,14 @@ def do_push_hg(parser):
                 puts(b"ok %s up to date" % ref)
                 continue
 
-            puts(b"ok %s" % ref)
+            ok_refs.append(ref)
             if not bookmark_is_fake(bmark, parser.repo._bookmarks):
                 p_bmarks.append((ref, bmark, old, new))
 
             p_revs[bnode] = ref
         elif ref.startswith(b'refs/tags/'):
             if dry_run:
-                puts(b"ok %s" % ref)
+                ok_refs.append(ref)
                 continue
             tag = ref[len(b'refs/tags/'):]
             tag = hgref(tag)
@@ -1501,14 +1478,15 @@ def do_push_hg(parser):
                 fp.write(b'%s %s\n' % (node, tag))
                 fp.close()
             p_revs[bnode] = ref
-            puts(b"ok %s" % ref)
+            ok_refs.append(ref)
         else:
             # transport-helper/fast-export bugs
             continue
 
     if dry_run:
-        if peer:
-            checkheads(parser.repo, peer, p_revs, force_push)
+        if not peer or checkheads(parser.repo, peer, p_revs, force_push):
+            for ref in ok_refs:
+                puts(b"ok %s" % ref)
         return
 
     success = True
@@ -1529,12 +1507,18 @@ def do_push_hg(parser):
             if not peer.pushkey(b'bookmarks', bmark, old, new):
                 success = False
                 puts(b"error %s" % ref)
+                ok_refs.remove(ref)
     else:
         # update local bookmarks
         for ref, bmark, old, new in p_bmarks:
             if not bookmarks.pushbookmark(parser.repo, bmark, old, new):
                 success = False
                 puts(b"error %s" % ref)
+                ok_refs.remove(ref)
+
+    # update rest of the refs
+    for ref in ok_refs:
+        puts(b"ok %s" % ref)
 
     return success
 
@@ -1743,8 +1727,7 @@ def fix_path(alias, repo, orig_url):
     url = compat.urlparse(orig_url, b'file')
     if url.scheme != b'file' or os.path.isabs(os.path.expanduser(url.path)):
         return
-    abs_url = compat.urljoin(b"%s/" % compat.getcwd(), orig_url)
-    cmd = ['git', 'config', b'remote.%s.url' % alias, b"hg::%s" % abs_url]
+    cmd = ['git', 'config', b'remote.%s.url' % alias, b"hg::%s" % os.path.abspath(orig_url)]
     subprocess.call(cmd)
 
 def select_private_refs(alias):
@@ -1922,7 +1905,7 @@ def main(args):
         fix_path(alias, peer or repo, url)
 
     marks_path = os.path.join(marksdir, b'marks-hg')
-    marks = Marks(marks_path, repo)
+    marks = Marks(marks_path)
 
     if sys.platform == 'win32':
         import msvcrt

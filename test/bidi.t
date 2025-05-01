@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright (c) 2012 Felipe Contreras
 #
@@ -8,14 +8,7 @@
 
 test_description='Test bidirectionality of remote-hg'
 
-test -n "$TEST_DIRECTORY" || TEST_DIRECTORY=$(dirname $0)/
-. "$TEST_DIRECTORY"/test-lib.sh
-
-if ! test_have_prereq PYTHON
-then
-	skip_all='skipping remote-hg tests; python with mercurial not available'
-	test_done
-fi
+. ./test-lib.sh
 
 # clone to a git repo
 git_clone () {

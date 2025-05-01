@@ -1,8 +1,10 @@
-#!/bin/sh
+#!/bin/bash
+
+: "${SHARNESS_TEST_SRCDIR:=$(cd "$(dirname "${BASH_SOURCE-$0}")" && pwd)}"
 
 if [ -z "$SHARNESS" ] ; then
 	for d in \
-		"." \
+		"$SHARNESS_TEST_SRCDIR" \
 		"$HOME/share/sharness" \
 		"/usr/local/share/sharness" \
 		"/usr/share/sharness"
@@ -62,7 +64,15 @@ GIT_COMMITTER_EMAIL=committer@example.com
 GIT_COMMITTER_NAME='C O Mitter'
 export GIT_AUTHOR_EMAIL GIT_AUTHOR_NAME
 export GIT_COMMITTER_EMAIL GIT_COMMITTER_NAME
+
 # maintain backwards compatible default
 # (as used in remote helper)
 git config --global init.defaultBranch master
 git config --global protocol.file.allow always
+
+unset XDG_CONFIG_HOME
+
+if [[ $(uname -s) = MSYS* ]]; then
+	test_set_prereq WIN
+	export TEST_CMP='diff --strip-trailing-cr -u'
+fi
