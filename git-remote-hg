@@ -401,27 +401,24 @@ def fix_file_path(path):
     # even Git for Windows expects forward
     return path.replace(compat.to_b(os.sep), b'/')
 
-def export_files(files):
-    final = []
-    for f in files:
-        fid = node.hex(f.filenode())
+def export_file(ctx, fname):
+    f = ctx.filectx(fname)
+    fid = node.hex(f.filenode())
 
-        if fid in filenodes:
-            mark = filenodes[fid]
-        else:
-            mark = marks.next_mark()
-            filenodes[fid] = mark
-            d = f.data()
+    if fid in filenodes:
+        mark = filenodes[fid]
+    else:
+        mark = marks.next_mark()
+        filenodes[fid] = mark
+        d = f.data()
 
-            puts(b"blob")
-            puts(b"mark :%u" % mark)
-            puts(b"data %d" % len(d))
-            puts(d)
+        puts(b"blob")
+        puts(b"mark :%u" % mark)
+        puts(b"data %d" % len(d))
+        puts(f.data())
 
-        path = fix_file_path(f.path())
-        final.append((gitmode(f.flags()), mark, path))
-
-    return final
+    path = fix_file_path(f.path())
+    return (gitmode(f.flags()), mark, path)
 
 def get_filechanges(repo, ctx, parent):
     if hasattr(parent, 'status'):
@@ -715,7 +712,7 @@ def export_ref(repo, name, kind, head):
         if len(parents) == 0:
             puts(b'reset %s/%s' % (prefix, ename))
 
-        modified_final = export_files(c.filectx(f) for f in modified)
+        modified_final = [export_file(c, fname) for fname in modified]
 
         puts(b"commit %s/%s" % (prefix, ename))
         puts(b"mark :%d" % (marks.get_mark(c.hex())))
