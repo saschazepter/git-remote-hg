@@ -697,7 +697,7 @@ def export_ref(repo, name, kind, head):
                 extra_msg += b"rename : %s => %s\n" % e
 
             for key, value in compat.iteritems(extra):
-                if key in (b'author', b'committer', b'encoding', b'message', b'branch', b'hg-git'):
+                if key in (b'author', b'committer', b'encoding', b'message', b'branch', b'hg-git', b'transplant_source'):
                     continue
                 elif key == b'hg-git-rename-source' and value == b'git':
                     # extra data that hg-git might put there unconditionally

@@ -70,6 +70,8 @@ export GIT_COMMITTER_EMAIL GIT_COMMITTER_NAME
 git config --global init.defaultBranch master
 git config --global protocol.file.allow always
 
+unset XDG_CONFIG_HOME
+
 if [[ $(uname -s) = MSYS* ]]; then
 	test_set_prereq WIN
 	export TEST_CMP='diff --strip-trailing-cr -u'
