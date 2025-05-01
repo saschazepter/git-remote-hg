@@ -147,10 +147,10 @@ else:
 # Commits are modified to preserve hg information and allow bidirectionality.
 #
 
-NAME_RE = re.compile(b'^([^<>]+)')
-AUTHOR_RE = re.compile(b'^([^<>]+?)? ?[<>]([^<>]*)(?:$|>)')
+NAME_RE = re.compile(br'^([^<>]+)')
+AUTHOR_RE = re.compile(br'^([^<>]+?)? ?[<>]([^<>]*)(?:$|>)')
 EMAIL_RE = re.compile(br'([^ \t<>]+@[^ \t<>]+)')
-AUTHOR_HG_RE = re.compile(b'^(.*?) ?<(.*?)(?:>(.*))?$')
+AUTHOR_HG_RE = re.compile(br'^(.*?) ?<(.*?)(?:>(.*))?$')
 RAW_AUTHOR_RE = re.compile(br'^(\w+) (?:(.+)? )?<(.*)> (\d+) ([+-]\d+)')
 
 VERSION = 2
@@ -466,7 +466,7 @@ def fixup_user_git(user):
 def fixup_user_hg(user):
     def sanitize(name):
         # stole this from hg-git
-        return re.sub(b'[<>\n]', b'?', name.lstrip(b'< ').rstrip(b'> '))
+        return re.sub(br'[<>\n]', b'?', name.lstrip(b'< ').rstrip(b'> '))
 
     m = AUTHOR_HG_RE.match(user)
     if m:
@@ -1319,7 +1319,10 @@ def checkheads(repo, remote, p_revs, force):
 def push_unsafe(repo, remote, p_revs, force):
 
     fci = discovery.findcommonincoming
-    commoninc = fci(repo, remote, force=force)
+    if check_version(4, 5):
+        commoninc = fci(repo, remote, force=force, ancestorsof=list(p_revs))
+    else:
+        commoninc = fci(repo, remote, force=force)
     common, _, remoteheads = commoninc
     fco = discovery.findcommonoutgoing
     outgoing = fco(repo, remote, onlyheads=list(p_revs), commoninc=commoninc, force=force)
@@ -1349,12 +1352,6 @@ def push_unsafe(repo, remote, p_revs, force):
         ret = remote.unbundle(cg, remoteheads, b'push')
     else:
         ret = remote.addchangegroup(cg, b'push', repo.url())
-
-    phases = remote.listkeys(b'phases')
-    if phases:
-        for head in p_revs:
-            # update to public
-            remote.pushkey(b'phases', hghex(head), b'1', b'0')
 
     return ret
 
