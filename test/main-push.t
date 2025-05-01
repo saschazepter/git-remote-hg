@@ -1,7 +1,8 @@
+#!/bin/bash
+
 CAPABILITY_PUSH=t
 
-test -n "$TEST_DIRECTORY" || TEST_DIRECTORY=$(dirname $0)/
-. "$TEST_DIRECTORY"/main.t
+. ./main.t
 
 
 # .. and some push mode only specific tests
