@@ -71,6 +71,26 @@ the same commits:
 % git config --global remote-hg.hg-git-compat true
 --------------------------------------
 
+****
+mnauw's note; The above is not quite the case, it only ever has been (somewhat)
+if an undocumented debug mode (`debugextrainmessage` setting) was enabled
+in (likely somewhat patched) `hg-git`.  And as of `hg-git` v1.2.0 the latter is
+no longer considered.  In fact, `hg-git` creates git commits with additional hg
+metadata stored in so-called "extra commit headers". The latter might be seen by
+`git log --format=raw` or `git cat-file -p <commitid>`, but are otherwise mostly
+only used internally by the git suite (for signatures).  While they are supported
+by `dulwich`'s API (which is a python git implementation), there is, however,
+limited to no support for those in git "porcelain or plumbing" commands. In
+particular, `git fast-export` and `git fast-import` do not consider these, so a
+`gitremote-helpers` tool is then also out of luck.  Incidentally, it also
+follows that a `git fast-export | git fast-import` "clone" approach would also
+lose such extra metadata, and likewise so for e.g. `git filter-repo`.
+
+All in all, this mode is not quite recommended.
+If the concern here is not so much `hg-git` compatibility but rather "hg-git-hg
+round-trip fidelity", then see the discussion below on `check-hg-commits` setting.
+****
+
 == Notes ==
 
 Remember to run `git gc --aggressive` after cloning a repository, especially if
