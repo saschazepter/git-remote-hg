@@ -101,6 +101,8 @@ setup () {
 	[remote-hg]
 		hg-git-compat = true
 		track-branches = false
+		# directly use local repo to avoid push (and hence phase issues)
+		shared-marks = false
 	EOF
 
 	export HGEDITOR=true
