@@ -90,8 +90,6 @@ lose such extra metadata, and likewise so for e.g. `git filter-repo`.
 Remember to run `git gc --aggressive` after cloning a repository, especially if
 it's a big one. Otherwise lots of space will be wasted.
 
-The newest supported version of Mercurial is 6.2, the oldest one is 2.4.
-
 === Pushing branches ===
 
 To push a branch, you need to use the 'branches/' prefix:
