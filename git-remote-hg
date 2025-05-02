@@ -693,6 +693,7 @@ def export_ref(repo, name, kind, head):
                 if rename:
                     renames.append((rename[0], f))
 
+            # NOTE no longer used in hg-git, a HG:rename extra header is used
             for e in renames:
                 extra_msg += b"rename : %s => %s\n" % e
 
@@ -1127,11 +1128,17 @@ def parse_commit(parser):
         # add some extra that hg-git adds (almost) unconditionally
         # see also https://foss.heptapod.net/mercurial/hg-git/-/merge_requests/211
         # NOTE it could be changed to another value below
-        extra[b'hg-git-rename-source'] = b'git'
+        # actually, it is *almost* unconditionally, and only done if the commit
+        # is deduced to originate in git.  However, the latter is based on
+        # presence/absence of HG markers in commit "extra headers".
+        # The latter can not be handled here, and so this can not be correctly
+        # reproduced.
+        # extra[b'hg-git-rename-source'] = b'git'
         i = data.find(b'\n--HG--\n')
         if i >= 0:
             tmp = data[i + len(b'\n--HG--\n'):].strip()
             for k, v in [e.split(b' : ', 1) for e in tmp.split(b'\n')]:
+                # NOTE no longer used in hg-git, a HG:rename extra header is used
                 if k == b'rename':
                     old, new = v.split(b' => ', 1)
                     files[new]['rename'] = old
