@@ -122,6 +122,27 @@ else:
         urlparse = staticmethod(_urlparse)
         urljoin = staticmethod(_urljoin)
 
+# new style way to import a source file
+def _imp_load_source(module_name, file_path):
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader(module_name, file_path)
+    spec = importlib.util.spec_from_loader(module_name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+def import_sibling(mod, filename):
+    mydir = os.path.dirname(__file__)
+    sys.dont_write_bytecode = True
+    vi = sys.version_info
+    ff = os.path.join(mydir, filename)
+    if vi.major >= 3 and vi.minor >= 5:
+        return _imp_load_source(mod, ff)
+    else:
+        import imp
+        return imp.load_source(mod, ff)
+
 #
 # If you want to see Mercurial revisions as Git commit notes:
 # git config core.notesRef refs/notes/hg
@@ -1609,10 +1630,7 @@ def do_push_refspec(parser, refspec, revs):
             tmpfastexport = open(os.path.join(marksdir, b'git-fast-export-%d' % (os.getpid())), 'w+b')
             subprocess.check_call(cmd, stdin=None, stdout=tmpfastexport)
             try:
-                import imp
-                sys.dont_write_bytecode = True
-                ctx.hghelper = imp.load_source('hghelper', \
-                    os.path.join(os.path.dirname(__file__), 'git-hg-helper'))
+                ctx.hghelper = import_sibling('hghelper', 'git-hg-helper')
                 ctx.hghelper.init_git(gitdir)
                 ctx.gitmarks = ctx.hghelper.GitMarks(tmpmarks)
                 # let processing know it should not bother pushing if not requested
