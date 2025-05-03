@@ -227,9 +227,12 @@ class GitHgRepo:
                         warn(b'failed to find local hg for remote %s' % (r))
                         continue
                 else:
+                    npath = os.path.abspath(hg_path)
+                    # use relative path if possible
+                    if check_version(4, 2):
+                        npath = os.path.join(b'..', b'..', b'..', b'.hg')
                     # make sure the shared path is always up-to-date
-                    util.writefile(os.path.join(local_hg, b'sharedpath'),
-                        os.path.abspath(hg_path))
+                    util.writefile(os.path.join(local_hg, b'sharedpath'), npath)
                 self.hg_repos[r] = os.path.join(local_path)
 
         log('%s determined hg_repos %s', self.identity(), self.hg_repos)
