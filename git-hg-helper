@@ -146,7 +146,7 @@ class GitHgRepo:
         process = self.start_cmd(args, **kwargs)
         output = process.communicate()[0]
         if check and process.returncode != 0:
-            die(b'command failed: %s' % b' '.join([compat.to_b(a) for a in cmd]))
+            die(b'git command failed: %s' % b' '.join([compat.to_b(a) for a in args]))
         return output
 
     def get_config(self, config, getall=False):
