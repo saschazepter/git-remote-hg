@@ -369,7 +369,8 @@ up elsewhere as expected (regardless of conversion mapping or ABI).
 
 Note that identifying and re-using the hg changeset relies on metadata
 (`refs/notes/hg` and marks files) that is not managed or maintained by any
-git-to-git fetch (or clone).
+git-to-git fetch (or clone) (as that is only automatically so for `refs/heads/`,
+though it could be pushed manually).
 As such (and as said), this approach aims for plain-and-simple safety, but only
 within a local scope (git repo).
 
