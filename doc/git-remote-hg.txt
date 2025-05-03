@@ -104,6 +104,20 @@ the invalid '~'
 % git config --global remote-hg.ignore-name ~
 --------------------------------------
 
+Even though the "gitdir" is configurable (using `GIT_DIR`), git does not accept
+certain pathname components, e.g. `.git` or `.gitmodules` (case-insensitive).
+Problems arise if the hg repo contains such pathnames, and recent git versions
+will reject this in a very hard way.  So these pathnames are now mapped
+from "hg space" to "git space" in a one-to-one way, where (e.g.)
+`.git[0 or more suffix]` is mapped to `.git[1 or more suffix]` (obviously by
+appending or removing a suffix). The "suffix" in question defaults to `_`,
+but can be configured using
+
+--------------------------------------
+% git config --global remote-hg.dotfile-suffix _
+--------------------------------------
+
+
 NOTES
 -----
 

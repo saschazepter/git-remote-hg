@@ -438,7 +438,7 @@ def export_file(ctx, fname):
         puts(b"data %d" % len(d))
         puts(f.data())
 
-    path = fix_file_path(f.path())
+    path = fixup_path_to_git(fix_file_path(f.path()))
     return (gitmode(f.flags()), mark, path)
 
 def get_filechanges(repo, ctx, parent):
@@ -517,6 +517,51 @@ def fixup_user(user):
         mail = bad_mail
 
     return b'%s <%s>' % (name, mail)
+
+# (recent) git fast-import does not accept .git or .gitmodule component names
+# (anywhere, case-insensitive)
+# in any case, surprising things may happen, so add some front-end replacement magic;
+# transform of (hg) .git(0 or more suffix) to (git) .git(1 or more suffix)
+# (likewise so for any invalid git keyword)
+def fixup_dotfile_path(path, suffix, add):
+    def subst(part):
+        if (not part) or part[0] != ord(b'.'):
+            return part
+        for prefix in (b'.git', b'.gitmodules'):
+            pl = len(prefix)
+            tail = len(part) - pl
+            if tail < 0:
+                continue
+            if part[0:pl].lower() == prefix and part[pl:] == suffix * tail:
+                if add:
+                    return part + suffix
+                elif tail == 0:
+                    # .git should not occur in git space
+                    # so complain
+                    if pl == 3:
+                        die('invalid path component %s' % part)
+                    else:
+                        # but .gitmodules might
+                        # leave as-is, it is handled/ignored elsewhere
+                        return part
+                else:
+                    return part[0:-1]
+        return part
+    # quick optimization check;
+    if (not path) or (path[0] != ord(b'.') and path.find(b'/.') < 0):
+        return path
+    sep = b'/'
+    return sep.join((subst(part) for part in path.split(sep)))
+
+def fixup_path_to_git(path):
+    if not dotfile_suffix:
+        return path
+    return fixup_dotfile_path(path, dotfile_suffix, True)
+
+def fixup_path_from_git(path):
+    if not dotfile_suffix:
+        return path
+    return fixup_dotfile_path(path, dotfile_suffix, False)
 
 def updatebookmarks(repo, peer):
     remotemarks = peer.listkeys(b'bookmarks')
@@ -749,7 +794,7 @@ def export_ref(repo, name, kind, head):
                 puts(b"merge :%u" % (rev_to_mark(parents[1])))
 
         for f in removed:
-            puts(b"D %s" % (fix_file_path(f)))
+            puts(b"D %s" % fixup_path_to_git(fix_file_path(f)))
         for f in modified_final:
             puts(b"M %s :%u %s" % f)
         puts()
@@ -1042,6 +1087,7 @@ def parse_commit(parser):
         else:
             die(b'Unknown file command: %s' % line)
         path = c_style_unescape(path)
+        path = fixup_path_from_git(path)
         files[path] = files.get(path, {})
         files[path].update(f)
 
@@ -1867,6 +1913,7 @@ def main(args):
     global capability_push
     global remove_username_quotes
     global marksdir
+    global dotfile_suffix
 
     marks = None
     is_tmp = False
@@ -1886,6 +1933,7 @@ def main(args):
     track_branches = get_config_bool('remote-hg.track-branches', True)
     capability_push = get_config_bool('remote-hg.capability-push', True)
     remove_username_quotes = get_config_bool('remote-hg.remove-username-quotes', True)
+    dotfile_suffix = get_config('remote-hg.dotfile-suffix').strip() or b'_'
     force_push = False
 
     if hg_git_compat:

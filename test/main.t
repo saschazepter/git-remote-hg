@@ -268,6 +268,41 @@ test_expect_success 'strip' '
 	test_cmp actual expected
 '
 
+test_expect_success 'dotfiles' '
+	test_when_finished "rm -rf hgrepo gitrepo" &&
+
+	(
+	hg init hgrepo &&
+	cd hgrepo &&
+
+	echo one >.git &&
+	echo ONE >.GIT &&
+	mkdir a && echo two > a/.gitmodules &&
+	hg add .git .GIT a/.gitmodules &&
+	hg commit -m zero
+	) &&
+
+	git clone "hg::hgrepo" gitrepo &&
+	test_cmp gitrepo/.git_ hgrepo/.git &&
+	test_cmp gitrepo/.GIT_ hgrepo/.GIT &&
+	test_cmp gitrepo/a/.gitmodules_ hgrepo/a/.gitmodules &&
+
+	(
+	cd gitrepo &&
+	echo three >.git_ &&
+	echo THREE >.GIT &&
+	echo four >a/.gitmodules_ &&
+	git add .git_ .GIT_ a/.gitmodules_ &&
+	git commit -m one &&
+	git push
+	) &&
+
+	hg -R hgrepo update &&
+	test_cmp gitrepo/.git_ hgrepo/.git &&
+	test_cmp gitrepo/.GIT_ hgrepo/.GIT &&
+	test_cmp gitrepo/a/.gitmodules_ hgrepo/a/.gitmodules
+'
+
 test_expect_success 'remote push with master bookmark' '
 	test_when_finished "rm -rf hgrepo gitrepo*" &&
 
