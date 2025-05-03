@@ -99,7 +99,7 @@ test_expect_success 'subcommand repo - with local proxy' '
 	test_cmp expected actual
 '
 
-test_expect_success 'subcommands hg-rev and git-rev' '
+test_expect_success 'subcommands hg-rev and git-rev and mapfile' '
 	test_when_finished "rm -rf gitrepo* hgrepo*" &&
 
 	setup_repos &&
@@ -110,7 +110,9 @@ test_expect_success 'subcommands hg-rev and git-rev' '
 	test -s rev-HEAD &&
 	git-hg-helper hg-rev `cat rev-HEAD` > hg-HEAD &&
 	git-hg-helper git-rev `cat hg-HEAD` > git-HEAD &&
-	test_cmp rev-HEAD git-HEAD
+	git-hg-helper mapfile --output mapfile origin &&
+	test_cmp rev-HEAD git-HEAD &&
+	grep "`cat rev-HEAD` `cat hg-HEAD`" mapfile
 	)
 '
 

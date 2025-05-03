@@ -558,6 +558,43 @@ class GcCommand(SubCommand):
                 gm.store()
 
 
+class MapFileCommand(SubCommand):
+
+    def argumentparser(self):
+        usage = '%%(prog)s %s [options] <remote>' % (self.subcommand)
+        p = argparse.ArgumentParser(usage=usage)
+        p.add_argument('--output', required=True,
+            help='mapfile to write')
+        p.epilog = textwrap.dedent("""\
+        Writes a so-called git-mapfile, as used internally by hg-git.
+        This files consists of lines of format `<githexsha> <hghexsha>`.
+
+        As such, the result could be used to coax hg-git in some manner.
+        However, as git-remote-hg and hg-git may (likely) produce different
+        commits (either git or hg), mixed use of both tools is not recommended.
+        """)
+        return p
+
+    def do(self, options, args):
+        remotehg = import_sibling('remotehg', 'git-remote-hg')
+
+        if not args or len(args) != 1:
+            self.usage('expect 1 remote')
+
+        remote = args[0]
+        hgpath = remotehg.select_marks_dir(remote, self.githgrepo.gitdir, False)
+        puts(b"Loading hg marks ...")
+        hgm = remotehg.Marks(os.path.join(hgpath, b'marks-hg'), None)
+        puts(b"Loading git marks ...")
+        gm = GitMarks(os.path.join(hgpath, b'marks-git'))
+        puts(b"Writing mapfile ...")
+        with open(options.output, 'wb') as f:
+            for c, m in gm.marks.items():
+                hgc = hgm.rev_marks.get(m, None)
+                if hgc:
+                    f.write(b'%s %s\n' % (c, hgc))
+
+
 class SubRepoCommand(SubCommand):
 
     def writestate(repo, state):
@@ -924,6 +961,7 @@ def get_subcommands():
         b'repo': RepoCommand,
         b'gc':  GcCommand,
         b'sub': SubRepoCommand,
+        b'mapfile': MapFileCommand,
         b'help' : HelpCommand
     }
     # add remote named subcommands
@@ -946,6 +984,7 @@ def do_usage():
     gc      \t perform maintenance and consistency cleanup on repo tracking marks
     sub     \t manage subrepos
     repo    \t show local hg repo backing a remote
+    mapfile \t dump a hg-git git-mapfile
 
     If the subcommand is the name of a remote hg repo, then any remaining arguments
     are considered a "hg command", e.g. hg heads, or thg, and it is then executed
