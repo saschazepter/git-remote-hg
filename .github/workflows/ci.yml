@@ -3,11 +3,8 @@ name: CI
 on: [push]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        hg: [ '6.0', '6.1', '6.2', '6.3', '6.4', '6.5', '6.6', '6.7', '6.8', '6.9' ]
+  test-windows:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,9 +13,11 @@ jobs:
       - uses: actions/cache@v4
         id: cache-pip
         with:
-          path: ~/.cache/pip
-          key: pip
+          path: ~/appdata/local/pip/cache
+          key: pip-windows
       - name: Install hg
         run:
-          pip install mercurial==${{ matrix.hg }}
-      - run: prove -j4
+          pip install mercurial
+      - name: Run all tests
+        run: |
+          prove -j4 --exec bash.exe
