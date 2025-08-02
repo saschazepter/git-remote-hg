@@ -28,7 +28,7 @@ if [[ $(uname -s) = MSYS* ]]; then
 fi
 
 test_cmp() {
-	diff -u "$@"
+	${TEST_CMP:-diff -u} "$@"
 }
 
 test_when_finished() {
