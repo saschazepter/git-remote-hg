@@ -2,8 +2,7 @@
 
 CAPABILITY_PUSH=t
 
-. ./main.t
-
+. "$(dirname "$0")"/main.t
 
 # .. and some push mode only specific tests
 
